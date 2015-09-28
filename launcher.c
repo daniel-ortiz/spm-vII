@@ -85,6 +85,14 @@ typedef struct _pf_ll_rec {
 	uint64_t ips[IP_NUM];
 } pf_ll_rec_t;
 
+typedef struct _pf_conf {
+	count_id_t count_id;
+	uint32_t type;
+	uint64_t config;
+	uint64_t config1;
+	uint64_t sample_period;
+} pf_conf_t;
+
 static const char * const mem_lvl[] = {
 	"N/A",
 	"HIT",
@@ -257,7 +265,7 @@ ll_sample_read(struct perf_event_mmap_page *mhdr, int size,
 	pf_ll_rec_t *rec)
 {
 	struct { uint32_t pid, tid; } id;
-	uint64_t addr, cpu, weight, nr, value, *ips,origin;
+	uint64_t addr, cpu, weight, nr, value, *ips,origin,time,ip,period;
 	int i, j, ret = -1;
 	union perf_mem_data_src dsrc;
 
@@ -271,70 +279,58 @@ ll_sample_read(struct perf_event_mmap_page *mhdr, int size,
 	 *	{ u64	weight; }
 	 * };
 	 */
+	
+	if (mmap_buffer_read(mhdr, &ip, sizeof (ip)) == -1) {
+		printf( "ll_sample_read: read ip failed.\n");
+		goto L_EXIT;
+	}
+	size -= sizeof (ip);
+	
 	if (mmap_buffer_read(mhdr, &id, sizeof (id)) == -1) {
 		printf("ll_sample_read: read pid/tid failed.\n");
 		goto L_EXIT;
 	}
 
 	size -= sizeof (id);
-
+	
+	if (mmap_buffer_read(mhdr, &time, sizeof (time)) == -1) {
+		printf("ll_sample_read: read time failed.\n");
+		goto L_EXIT;
+	}
+	
+	size -= sizeof (time);
 	if (mmap_buffer_read(mhdr, &addr, sizeof (addr)) == -1) {
 		printf("ll_sample_read: read addr failed.\n");
 		goto L_EXIT;
 	}
-
+	
 	size -= sizeof (addr);
 
 	if (mmap_buffer_read(mhdr, &cpu, sizeof (cpu)) == -1) {
 		printf( "ll_sample_read: read cpu failed.\n");
 		goto L_EXIT;
 	}
-	printf("%ld",cpu);
-
 	size -= sizeof (cpu);
-
-	if (mmap_buffer_read(mhdr, &nr, sizeof (nr)) == -1) {
-		printf( "ll_sample_read: read nr failed.\n");
+	
+	if (mmap_buffer_read(mhdr, &period, sizeof (period)) == -1) {
+		printf( "ll_sample_read: read period failed.\n");
 		goto L_EXIT;
 	}
-
-	size -= sizeof (nr);
-
-	j = 0;
-	ips = rec->ips;
-	for (i = 0; i < nr; i++) {
-		if (j >= IP_NUM) {
-			break;
-		}
-
-		if (mmap_buffer_read(mhdr, &value, sizeof (value)) == -1) {
-			printf(NULL, 2, "ll_sample_read: read ip failed.\n");
-			goto L_EXIT;
-		}
-
-		size -= sizeof (value);
-		
-		if (value < KERNEL_ADDR_START) {
-			/*
-			 * Only save the user-space address.
-			 */
-			ips[j] = value;
-			j++;
-		}
-	}
-
+	size -= sizeof (period);
+	
 	if (mmap_buffer_read(mhdr, &weight, sizeof (weight)) == -1) {
 		printf("ll_sample_read: read weight failed.\n");
 		goto L_EXIT;
 	}
 	
 	size -= sizeof (weight);
+
 	
-	if (mmap_buffer_read(mhdr, &origin, sizeof (dsrc)) == -1) {
+	if (mmap_buffer_read(mhdr, &dsrc, sizeof (dsrc)) == -1) {
 		printf("ll_sample_read: read origin failed.\n");
 		goto L_EXIT;
 	}
-	printf("%d %s ",dsrc.mem_lvl, print_access_type(dsrc.mem_lvl));
+	printf("%d %s %lu %d %lu -",dsrc.mem_lvl, print_access_type(dsrc.mem_lvl),weight,id.pid, dsrc);
 	size -= sizeof (dsrc);
 	
 	rec->ip_num = j;
@@ -362,6 +358,61 @@ pf_event_open(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd,
 	return (syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags));
 }
 
+int
+pf_profiling_setup(struct _perf_cpu *cpu, int idx, pf_conf_t *conf)
+{
+	struct perf_event_attr attr;
+	int *fds = cpu->fds;
+	int group_fd;
+
+	memset(&attr, 0, sizeof (attr));
+	attr.type = conf->type;	
+	attr.config = conf->config;
+	attr.config1 = conf->config1;
+	attr.sample_period = conf->sample_period;
+	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_READ |
+		PERF_SAMPLE_CALLCHAIN;
+	attr.read_format = PERF_FORMAT_GROUP |
+		PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+
+	if (idx == 0) {
+		attr.disabled = 1;
+		group_fd = -1;
+	} else {
+		group_fd = fds[0];;
+	}
+
+	if ((fds[idx] = pf_event_open(&attr, -1, cpu->cpuid, group_fd, 0)) < 0) {
+		debug_print(NULL, 2, "pf_profiling_setup: pf_event_open is failed "
+			"for CPU%d, COUNT%d\n", cpu->cpuid, idx);
+		fds[idx] = INVALID_FD;
+		return (-1);
+	}
+	
+	if (idx == 0) {
+		if ((cpu->map_base = mmap(NULL, s_mapsize, PROT_READ | PROT_WRITE,
+			MAP_SHARED, fds[0], 0)) == MAP_FAILED) {
+			close(fds[0]);
+			fds[0] = INVALID_FD;
+			return (-1);	
+		}
+
+		cpu->map_len = s_mapsize;
+		cpu->map_mask = s_mapmask;
+	} else {
+        if (ioctl(fds[idx], PERF_EVENT_IOC_SET_OUTPUT, fds[0]) != 0) {
+			debug_print(NULL, 2, "pf_profiling_setup: "
+				"PERF_EVENT_IOC_SET_OUTPUT is failed for CPU%d, COUNT%d\n",
+				cpu->cpuid, idx);
+			close(fds[idx]);
+			fds[idx] = INVALID_FD;
+			return (-1);
+		}
+	}
+
+	return (0);
+}
+
 int pf_ll_setup(struct _perf_cpu *cpu)
 {
 	struct perf_event_attr attr;
@@ -369,13 +420,13 @@ int pf_ll_setup(struct _perf_cpu *cpu)
 
 	memset(&attr, 0, sizeof (attr));
 	attr.type = 4;
-	attr.config = 5439949;
+	attr.config = 461;
 	attr.config1 = 148;
 	attr.sample_period = 500;
 	attr.precise_ip = 1;
 	attr.exclude_guest = 1;
-	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_ADDR | PERF_SAMPLE_CPU |
-		PERF_SAMPLE_WEIGHT | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_DATA_SRC  ; 
+	attr.sample_type = PERF_SAMPLE_IP |PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_ADDR | PERF_SAMPLE_CPU |
+		PERF_SAMPLE_PERIOD | PERF_SAMPLE_WEIGHT | PERF_SAMPLE_DATA_SRC  ; 
 	attr.disabled = 1;
 
 	if ((fds[0] = pf_event_open(&attr, -1, cpu->cpuid, -1, 0)) < 0) {
