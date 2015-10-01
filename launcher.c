@@ -43,6 +43,7 @@
 #define PF_MAP_NPAGES_MAX           1024
 #define PF_MAP_NPAGES_MIN           64
 #define PF_MAP_NPAGES_NORMAL        256
+#define BUFFER_SIZE					500
 
 #define rmb() asm volatile("lock; addl $0,0(%%esp)" ::: "memory")
 
@@ -60,6 +61,15 @@ typedef enum {
 	B_FALSE = 0,
 	B_TRUE
 } boolean_t;
+
+typedef enum {
+	COUNT_INVALID = -1,
+	COUNT_CORE_CLK = 0,
+	COUNT_RMA,
+	COUNT_CLK,
+	COUNT_IR,
+	COUNT_LMA
+} count_id_t;
 
 typedef struct _perf_cpu {
 	int cpuid;
@@ -83,6 +93,7 @@ typedef struct _pf_ll_rec {
 	uint64_t latency;
 	unsigned int ip_num;
 	uint64_t ips[IP_NUM];
+	union perf_mem_data_src data_source;
 } pf_ll_rec_t;
 
 typedef struct _pf_conf {
@@ -195,7 +206,13 @@ ll_recbuf_update(pf_ll_rec_t *rec_arr, int *nrec, pf_ll_rec_t *rec)
 	 */
 	i = *nrec;
 	memcpy(&rec_arr[i], rec, sizeof (pf_ll_rec_t));
-	*nrec += 1;
+	
+	if(*nrec == BUFFER_SIZE-1){
+		*nrec=0;
+	}else{
+		*nrec += 1;
+	}
+	
 }
 
  static void mmap_buffer_skip(struct perf_event_mmap_page *header, int size)
@@ -330,7 +347,8 @@ ll_sample_read(struct perf_event_mmap_page *mhdr, int size,
 		printf("ll_sample_read: read origin failed.\n");
 		goto L_EXIT;
 	}
-	printf("%d %s %lu %d %lu -",dsrc.mem_lvl, print_access_type(dsrc.mem_lvl),weight,id.pid, dsrc);
+	//printf("%d %s %lu %d %lu -",dsrc.mem_lvl, print_access_type(dsrc.mem_lvl),weight,id.pid, dsrc);
+	
 	size -= sizeof (dsrc);
 	
 	rec->ip_num = j;
@@ -338,7 +356,8 @@ ll_sample_read(struct perf_event_mmap_page *mhdr, int size,
 	rec->tid = id.tid;
 	rec->addr = addr;
 	rec->cpu = cpu;
-	rec->latency = weight;	
+	rec->latency = weight;
+	rec->data_source=dsrc;	
 	ret = 0;
 
 L_EXIT:
@@ -358,60 +377,6 @@ pf_event_open(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd,
 	return (syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags));
 }
 
-int
-pf_profiling_setup(struct _perf_cpu *cpu, int idx, pf_conf_t *conf)
-{
-	struct perf_event_attr attr;
-	int *fds = cpu->fds;
-	int group_fd;
-
-	memset(&attr, 0, sizeof (attr));
-	attr.type = conf->type;	
-	attr.config = conf->config;
-	attr.config1 = conf->config1;
-	attr.sample_period = conf->sample_period;
-	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_READ |
-		PERF_SAMPLE_CALLCHAIN;
-	attr.read_format = PERF_FORMAT_GROUP |
-		PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
-
-	if (idx == 0) {
-		attr.disabled = 1;
-		group_fd = -1;
-	} else {
-		group_fd = fds[0];;
-	}
-
-	if ((fds[idx] = pf_event_open(&attr, -1, cpu->cpuid, group_fd, 0)) < 0) {
-		debug_print(NULL, 2, "pf_profiling_setup: pf_event_open is failed "
-			"for CPU%d, COUNT%d\n", cpu->cpuid, idx);
-		fds[idx] = INVALID_FD;
-		return (-1);
-	}
-	
-	if (idx == 0) {
-		if ((cpu->map_base = mmap(NULL, s_mapsize, PROT_READ | PROT_WRITE,
-			MAP_SHARED, fds[0], 0)) == MAP_FAILED) {
-			close(fds[0]);
-			fds[0] = INVALID_FD;
-			return (-1);	
-		}
-
-		cpu->map_len = s_mapsize;
-		cpu->map_mask = s_mapmask;
-	} else {
-        if (ioctl(fds[idx], PERF_EVENT_IOC_SET_OUTPUT, fds[0]) != 0) {
-			debug_print(NULL, 2, "pf_profiling_setup: "
-				"PERF_EVENT_IOC_SET_OUTPUT is failed for CPU%d, COUNT%d\n",
-				cpu->cpuid, idx);
-			close(fds[idx]);
-			fds[idx] = INVALID_FD;
-			return (-1);
-		}
-	}
-
-	return (0);
-}
 
 int pf_ll_setup(struct _perf_cpu *cpu)
 {
@@ -456,8 +421,8 @@ pf_ll_record(struct _perf_cpu *cpu, pf_ll_rec_t *rec_arr, int *nrec)
 	pf_ll_rec_t rec;
 	int size;
 
-	if (nrec != NULL) {
-		*nrec = 0;
+	if (nrec == NULL) {
+		printf("erroneous reference to record position");
 	}
 
 	for (;;) {
@@ -465,7 +430,7 @@ pf_ll_record(struct _perf_cpu *cpu, pf_ll_rec_t *rec_arr, int *nrec)
 			/* No valid record in ring buffer. */
    	    	return;
  		}
-		printf(" sample %d *", ehdr.size);
+	
 		if ((size = ehdr.size - sizeof (ehdr)) <= 0) {
 			return;
 		}
@@ -480,7 +445,7 @@ pf_ll_record(struct _perf_cpu *cpu, pf_ll_rec_t *rec_arr, int *nrec)
 		} else {
 			mmap_buffer_skip(mhdr, size);
 		}
-		printf("read");
+		//printf("read sample %d value %d ",*nrec,rec_arr[*nrec].latency, ehdr.size);
 	}
 }
 
@@ -511,13 +476,25 @@ int main(int argc, char **argv)
 	for(int i=0; i<32; i++){
 		pf_ll_start((cpus+i));
 	}
-	sleep(5);
-	pf_ll_rec_t* record=malloc(sizeof(pf_ll_rec_t)*1000);
-	int nrec=10000;
-	for(int j=0; j<1000000; j++){
-		for(int i=0; i<32; i++){
+	sleep(1);
+	pf_ll_rec_t* record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
+	int nrec=0;
+	int bef=0, wr_diff=0,current;
+	for(;;){
+	readagain:	for(int i=0; i<32; i++){
+			bef=nrec;
 			pf_ll_record((cpus+i),record,&nrec);
-		};
+			wr_diff=nrec >= bef ? nrec > bef : nrec+BUFFER_SIZE-bef;
+			
+			while(wr_diff>0){
+				current=nrec-wr_diff;
+				current = current < 0 ? BUFFER_SIZE+current : current;
+				//here we suppose we consume the sample
+				printf("%lu %d %d *", (record + current)->latency, nrec, current);
+				current=current != BUFFER_SIZE-1 ? current++ : 0;
+				wr_diff--;
+			}
+	}
 	}
 	printf("fin\n");
 	return 0;
