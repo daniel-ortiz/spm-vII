@@ -22,7 +22,7 @@
  */
 
 #include <inttypes.h>
-#include <sys/types.h>
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <unistd.h>
@@ -30,10 +30,11 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <stdio.h>
-#include <linux/perf_event.h>
 #include <unistd.h>
 #include <sys/sysinfo.h>
 #include <linux/unistd.h>
+
+#include "spm.h"
 
 #define COUNT_NUM   5
 #define IP_NUM	32
@@ -104,28 +105,12 @@ typedef struct _pf_conf {
 	uint64_t sample_period;
 } pf_conf_t;
 
-static const char * const mem_lvl[] = {
-	"N/A",
-	"HIT",
-	"MISS",
-	"L1",
-	"LFB",
-	"L2",
-	"L3",
-	"Local RAM",
-	"Remote RAM (1 hop)",
-	"Remote RAM (2 hops)",
-	"Remote Cache (1 hop)",
-	"Remote Cache (2 hops)",
-	"I/O",
-	"Uncached",
-};
-#define NUM_MEM_LVL (sizeof(mem_lvl)/sizeof(const char *))
+
 
 precise_type_t g_precise;
 static int s_mapsize, s_mapmask;
 int g_pagesize;
-
+int end_s;
 pagesize_init(void)
 {
 	g_pagesize = getpagesize();
@@ -153,44 +138,6 @@ pf_ringsize_init(void)
 	return (s_mapsize - g_pagesize);
 }
 
-char* print_access_type(int entry)
-{
-	char* out;
-	size_t sz = 500 - 1; /* -1 for null termination */
-	size_t i, l = 0;
-	unsigned int m =  PERF_MEM_LVL_NA;
-	unsigned int hit, miss;
-	out=malloc(500*sizeof(char));
-
-	m  = (unsigned int)entry;
-
-	out[0] = '\0';
-
-	hit = m & PERF_MEM_LVL_HIT;
-	miss = m & PERF_MEM_LVL_MISS;
-
-	/* already taken care of */
-	m &= ~(PERF_MEM_LVL_HIT|PERF_MEM_LVL_MISS);
-
-	for (i = 0; m && i < NUM_MEM_LVL; i++, m >>= 1) {
-		if (!(m & 0x1))
-			continue;
-		if (l) {
-			strcat(out, " or ");
-			l += 4;
-		}
-		strncat(out, mem_lvl[i], sz - l);
-		l += strlen(mem_lvl[i]);
-	}
-	if (*out == '\0')
-		strcpy(out, "N/A");
-	if (hit)
-		strncat(out, " hit", sz - l);
-	if (miss)
-		strncat(out, " miss", sz - l);
-
-	return  out;
-}
 
 ll_recbuf_update(pf_ll_rec_t *rec_arr, int *nrec, pf_ll_rec_t *rec)
 {
@@ -459,25 +406,50 @@ pf_ll_start(struct _perf_cpu *cpu)
 	return (0);
 }
 
-int main(int argc, char **argv)
-{
-	pagesize_init();
-	g_precise=PRECISE_HIGH;
-	pf_ringsize_init();
-	
-	perf_cpu_t *cpus= malloc(sizeof(perf_cpu_t)*32);
-	
+//TODO return values
+int setup_sampling(perf_cpu_t *cpus){
 	for(int i=0; i<32; i++){
 		memset((cpus+i),0,sizeof(perf_cpu_t));
 		cpus[i].cpuid=i;
 		pf_ll_setup((cpus+i));
 	}
-	
+	return  0;
+}
+
+//TODO return values
+int start_sampling(perf_cpu_t *cpus){
 	for(int i=0; i<32; i++){
 		pf_ll_start((cpus+i));
 	}
-	sleep(1);
-	pf_ll_rec_t* record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
+		return 0;
+}
+
+void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current){
+	
+	int core=record[current].cpu;
+	if(record[current].cpu <0 || record[current].cpu >= st->n_cores){
+		return;
+	}
+	//TODO counter with mismatching number of cpus
+	
+	st->metrics.total_samples++;
+	//TODO also get samples from the sampling process, detect high overhead
+	if(record[current].pid != st->pid_uo){
+		return; }
+	
+	st->metrics.process_samples[core]++;
+	int access_type= filter_local_accesses(&(record[current].data_source));
+	//TODO this depends on the page size
+	u64 mask=0xFFF, page_addr;
+	u64 page_sampled=record[current].addr & ~mask ;
+	
+	add_mem_access( st, (void*)page_sampled, core);
+	add_lvl_access( st, &(record[current].data_source),record[current].latency );
+	
+}
+
+//TODO return values
+int read_samples(perf_cpu_t *cpus, pf_ll_rec_t *record, struct sampling_settings *st){
 	int nrec=0;
 	int bef=0, wr_diff=0,current;
 	for(;;){
@@ -489,13 +461,63 @@ int main(int argc, char **argv)
 			while(wr_diff>0){
 				current=nrec-wr_diff;
 				current = current < 0 ? BUFFER_SIZE+current : current;
-				//here we suppose we consume the sample
-				printf("%lu %d %d *", (record + current)->latency, nrec, current);
+				//here we consume the sample
+				//printf("%lu %d %d *", (record + current)->latency, nrec, current);
+				consume_sample(st,record,current);
 				current=current != BUFFER_SIZE-1 ? current++ : 0;
 				wr_diff--;
 			}
+			if(end_s)
+				return;
+		}
 	}
-	}
+	
+	return 0;
+}
+
+void* controlsamp(void *arg){
+	printf("control on \n");
+	sleep(20);
+	end_s=1;
+	printf("end of measurement \n");
+}
+	
+int main(int argc, char **argv)
+{
+	pagesize_init();
+	g_precise=PRECISE_HIGH;
+	pf_ringsize_init();
+	int pid;
+	
+	//get pid from command line
+	pid = argc > 1 && atoi(argv[1])>0 ? atoi(argv[1]) : -1;
+	//TODO check filling of cpu field
+	perf_cpu_t *cpus= malloc(sizeof(perf_cpu_t)*32);
+	struct sampling_settings st;
+	
+	//TODO dynamic implementation
+	st.n_cores=32;
+	st.n_cpus=2;
+	st.pid_uo= pid; 
+	
+	end_s=0;
+	int fake_transl[32]={0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0};
+	pthread_t cthread;
+	pthread_create(&cthread,NULL,&controlsamp, NULL);
+	
+	memset(&(st.metrics),0,sizeof(struct sampling_metrics));
+	st.metrics.process_samples=malloc(sizeof(int)*st.n_cores);
+	st.core_to_cpu=malloc(sizeof(int)*st.n_cores);
+	
+	st.core_to_cpu=fake_transl;
+	setup_sampling(cpus);
+	start_sampling(cpus);
+	
+	//circular buffer for storing the load latency samples
+	pf_ll_rec_t* record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
+	
+	read_samples(cpus,record,&st);
+	print_statistics(&st);
 	printf("fin\n");
 	return 0;
 }
