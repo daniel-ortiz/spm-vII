@@ -42,3 +42,8 @@ struct sampling_metrics {
 	struct sampling_metrics metrics;	
 };
 
+
+void add_mem_access( struct sampling_settings *ss, void *page_addr, int accessing_cpu);
+void add_lvl_access( struct sampling_settings *ss, union perf_mem_data_src *entry, int weight );
+void print_statistics(struct sampling_settings *ss);
+int filter_local_accesses(union perf_mem_data_src *entry);

@@ -36,7 +36,7 @@
 
 #include "spm.h"
 
-#define COUNT_NUM   5
+#define COUNT_NUM   2
 #define IP_NUM	32
 #define KERNEL_ADDR_START	0xffffffff80000000
 #define INVALID_FD	-1
@@ -85,6 +85,22 @@ typedef struct _perf_cpu {
 	count_value_t countval_last;
 } perf_cpu_t;
 
+typedef struct _pf_profiling_rec {
+	unsigned int pid;
+	unsigned int tid;
+	uint64_t period;
+	count_value_t countval;
+	unsigned int ip_num;
+	uint64_t ips[IP_NUM];
+} pf_profiling_rec_t;
+
+typedef struct _pf_conf {
+	count_id_t count_id;
+	uint32_t type;
+	uint64_t config;
+	uint64_t config1;
+	uint64_t sample_period;
+} pf_conf_t;
 
 typedef struct _pf_ll_rec {
 	unsigned int pid;
@@ -97,26 +113,22 @@ typedef struct _pf_ll_rec {
 	union perf_mem_data_src data_source;
 } pf_ll_rec_t;
 
-typedef struct _pf_conf {
-	count_id_t count_id;
-	uint32_t type;
-	uint64_t config;
-	uint64_t config1;
-	uint64_t sample_period;
-} pf_conf_t;
 
-
+struct prof_config{
+	perf_cpu_t *cpus;
+};
 
 precise_type_t g_precise;
 static int s_mapsize, s_mapmask;
 int g_pagesize;
 int end_s;
-pagesize_init(void)
+
+ void pagesize_init(void)
 {
 	g_pagesize = getpagesize();
 }
 
-pf_ringsize_init(void)
+int pf_ringsize_init(void)
 {
 	switch (g_precise) {
 	case PRECISE_HIGH:
@@ -139,7 +151,7 @@ pf_ringsize_init(void)
 }
 
 
-ll_recbuf_update(pf_ll_rec_t *rec_arr, int *nrec, pf_ll_rec_t *rec)
+static void ll_recbuf_update(pf_ll_rec_t *rec_arr, int *nrec, pf_ll_rec_t *rec)
 {
 	int i;
 
@@ -167,13 +179,24 @@ ll_recbuf_update(pf_ll_rec_t *rec_arr, int *nrec, pf_ll_rec_t *rec)
 	int data_head;
 
 	data_head = header->data_head;
-	rmb();
+	//rmb();
 
 	if ((header->data_tail + size) > data_head) {
 		size = data_head - header->data_tail;
 	}
 
 	header->data_tail += size;
+}
+
+static void
+mmap_buffer_reset(struct perf_event_mmap_page *header)
+{
+	int data_head;
+
+	data_head = header->data_head;;
+	rmb();
+
+	header->data_tail = data_head;
 }
 
 static int
@@ -324,6 +347,217 @@ pf_event_open(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd,
 	return (syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags));
 }
 
+void pf_resource_free(struct _perf_cpu *cpu)
+{
+	int i;
+
+	for (i = 0; i < COUNT_NUM; i++) {
+		if (cpu->fds[i] != INVALID_FD) {
+			close(cpu->fds[i]);
+			cpu->fds[i] = INVALID_FD;
+		}
+	}
+
+	if (cpu->map_base != MAP_FAILED) {
+		munmap(cpu->map_base, cpu->map_len);
+		cpu->map_base = MAP_FAILED;
+		cpu->map_len = 0;
+	}
+}
+
+static void
+profiling_recbuf_update(pf_profiling_rec_t *rec_arr, int *nrec,
+	pf_profiling_rec_t *rec)
+{
+	int i;
+
+	if ((rec->pid == 0) || (rec->tid == 0)) {
+		/* Just consider the user-land process/thread. */
+		return;	
+	}
+
+	/*
+	 * The buffer of array is enough, don't need to consider overflow.
+	 */
+	i = *nrec;
+	memcpy(&rec_arr[i], rec, sizeof (pf_profiling_rec_t));
+	*nrec += 1;
+}
+
+static uint64_t
+scale(uint64_t value, uint64_t time_enabled, uint64_t time_running)
+{
+	uint64_t res = 0;
+
+	if (time_running > time_enabled) {
+		printf( "time_running > time_enabled\n");
+	}
+
+	if (time_running) {
+		res = (uint64_t)((double)value * (double)time_enabled / (double)time_running);
+	}
+
+	return (res);
+}
+
+static int
+profiling_sample_read(struct perf_event_mmap_page *mhdr, int size,
+	pf_profiling_rec_t *rec)
+{
+	struct { uint32_t pid, tid; } id;
+	count_value_t *countval = &rec->countval;
+	uint64_t time_enabled, time_running, nr, value, *ips;
+	int i, j, ret = -1;
+
+	/*
+	 * struct read_format {
+	 *	{ u32	pid, tid; }
+	 *	{ u64	nr; }
+	 *	{ u64	time_enabled; }
+	 *	{ u64	time_running; }
+	 *	{ u64	cntr[nr]; }
+	 *	[ u64	nr; }
+	 *	{ u64   ips[nr]; }
+	 * };
+	 */
+	if (mmap_buffer_read(mhdr, &id, sizeof (id)) == -1) {
+		printf( "profiling_sample_read: read pid/tid failed.\n");
+		goto L_EXIT;
+	}
+
+	size -= sizeof (id);
+
+	if (mmap_buffer_read(mhdr, &nr, sizeof (nr)) == -1) {
+		printf( "profiling_sample_read: read nr failed.\n");
+		goto L_EXIT;
+	}
+
+	size -= sizeof (nr);
+
+	if (mmap_buffer_read(mhdr, &time_enabled, sizeof (time_enabled)) == -1) {
+		printf("profiling_sample_read: read time_enabled failed.\n");
+		goto L_EXIT;
+	}
+
+	size -= sizeof (time_enabled);
+
+	if (mmap_buffer_read(mhdr, &time_running, sizeof (time_running)) == -1) {
+		printf( "profiling_sample_read: read time_running failed.\n");
+		goto L_EXIT;
+	}
+
+	size -= sizeof (time_running);
+	printf("nr: %d");
+	 
+	for (i = 0; i < nr; i++) {
+		if (mmap_buffer_read(mhdr, &value, sizeof (value)) == -1) {
+			printf( "profiling_sample_read: read value failed.\n");
+			goto L_EXIT;
+		}
+
+		size -= sizeof (value);
+
+		/*
+		 * Prevent the inconsistent results if share the PMU with other users
+		 * who multiplex globally.
+		 */
+		value = scale(value, time_enabled, time_running);
+		countval->counts[i] = value;
+		printf("v %lu ", value);
+	}
+	printf("\n");
+
+	if (mmap_buffer_read(mhdr, &nr, sizeof (nr)) == -1) {
+		printf( "profiling_sample_read: read nr failed.\n");
+		goto L_EXIT;
+	}
+
+	size -= sizeof (nr);
+
+	j = 0;
+	ips = rec->ips;
+	for (i = 0; i < nr; i++) {
+		if (j >= IP_NUM) {
+			break;
+		}
+
+		if (mmap_buffer_read(mhdr, &value, sizeof (value)) == -1) {
+			printf( "profiling_sample_read: read value failed.\n");
+			return (-1);
+		}
+
+		size -= sizeof (value);
+		
+		if (value < KERNEL_ADDR_START) {
+			/*
+			 * Only save the user-space address.
+			 */
+			ips[j] = value;
+			j++;
+		}
+	}
+
+	rec->ip_num = j;
+	rec->pid = id.pid;
+	rec->tid = id.tid;
+	ret = 0;
+	
+L_EXIT:	
+	if (size > 0) {
+		mmap_buffer_skip(mhdr, size);
+		printf("profiling_sample_read: skip %d bytes, ret=%d\n",
+			size, ret);
+	}
+
+	return (ret);
+}
+
+void pf_profiling_record(struct _perf_cpu *cpu, pf_profiling_rec_t *rec_arr,
+	int *nrec)
+{
+	struct perf_event_mmap_page *mhdr = cpu->map_base;
+	struct perf_event_header ehdr;
+	pf_profiling_rec_t rec;
+	int size;
+
+	if (nrec != NULL) {
+		*nrec = 0;
+	}
+
+	for (;;) {
+		if (mmap_buffer_read(mhdr, &ehdr, sizeof(ehdr)) == -1) {
+   	    	return;
+ 		}
+
+		if ((size = ehdr.size - sizeof (ehdr)) <= 0) {			
+			mmap_buffer_reset(mhdr);
+			return;
+		}
+
+		if ((ehdr.type == PERF_RECORD_SAMPLE) && (rec_arr != NULL)) {
+			printf("-  %d cpu --",cpu->cpuid );
+			if (profiling_sample_read(mhdr, size, &rec) == 0) {
+				profiling_recbuf_update(rec_arr, nrec, &rec);
+			} else {
+				/* No valid record in ring buffer. */
+				return;	
+			}
+		} else {
+			mmap_buffer_skip(mhdr, size);
+		}
+	}
+}
+
+int pf_profiling_start(struct _perf_cpu *cpu, count_id_t count_id)
+{
+	if (cpu->fds[count_id] != INVALID_FD) {
+		return (ioctl(cpu->fds[count_id], PERF_EVENT_IOC_ENABLE, 0));
+	}
+	
+	return (0);
+}
+
+
 
 int pf_ll_setup(struct _perf_cpu *cpu)
 {
@@ -405,24 +639,137 @@ pf_ll_start(struct _perf_cpu *cpu)
 	
 	return (0);
 }
+	
+static void
+cpu_init(perf_cpu_t *cpu)
+{
+	int i;
+
+	for (i = 0; i < COUNT_NUM; i++) {
+		cpu->fds[i] = INVALID_FD;	
+	}
+
+	cpu->map_base = MAP_FAILED;
+}
+
+
+int pf_profiling_setup(struct _perf_cpu *cpu, int idx, pf_conf_t *conf)
+{
+	struct perf_event_attr attr;
+	int *fds = cpu->fds;
+	int group_fd;
+
+	memset(&attr, 0, sizeof (attr));
+	attr.type = conf->type;	
+	attr.config = conf->config;
+	attr.config1 = conf->config1;
+	attr.sample_period = conf->sample_period;
+	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_READ |
+		PERF_SAMPLE_CALLCHAIN;
+	attr.read_format = PERF_FORMAT_GROUP |
+		PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+
+	if (idx == 0) {
+		attr.disabled = 1;
+		group_fd = -1;
+	} else {
+		group_fd = fds[0];;
+	}
+
+	if ((fds[idx] = pf_event_open(&attr, -1, cpu->cpuid, group_fd, 0)) < 0) {
+		printf( "pf_profiling_setup: pf_event_open is failed "
+			"for CPU%d, COUNT %d\n", cpu->cpuid, idx);
+		fds[idx] = INVALID_FD;
+		return (-1);
+	}
+	
+	if (idx == 0) {
+		if ((cpu->map_base = mmap(NULL, s_mapsize, PROT_READ | PROT_WRITE,
+			MAP_SHARED, fds[0], 0)) == MAP_FAILED) {
+			close(fds[0]);
+			fds[0] = INVALID_FD;
+			return (-1);	
+		}
+
+		cpu->map_len = s_mapsize;
+		cpu->map_mask = s_mapmask;
+	} else {
+        if (ioctl(fds[idx], PERF_EVENT_IOC_SET_OUTPUT, fds[0]) != 0) {
+			printf( "pf_profiling_setup: "
+				"PERF_EVENT_IOC_SET_OUTPUT is failed for CPU%d, COUNT%d\n",
+				cpu->cpuid, idx);
+			close(fds[idx]);
+			fds[idx] = INVALID_FD;
+			return (-1);
+		}
+	}
+
+	return (0);
+}
+
+
+static int
+cpu_profiling_setup(perf_cpu_t *cpu, void *arg)
+{
+	
+	pf_conf_t evt1={ .type=PERF_TYPE_RAW,.config= 0x5301B7,  .config1=0x67f800001, .count_id= COUNT_RMA, .sample_period=10000};
+	pf_conf_t evt2={ .type=PERF_TYPE_RAW,.config= 0x5301BB,  .config1=0x600400001, .count_id= COUNT_LMA, .sample_period=10000};
+	pf_conf_t conf_arr[2]={evt1,evt2} ;
+	int i, ret = 0;
+
+	cpu_init(cpu);
+	for (i = 0; i < COUNT_NUM; i++) {
+		if (conf_arr[i].config == INVALID_CONFIG) {
+			/*
+			 * Invalid config is at the end of array.
+			 */
+			 printf("init err 1\n");
+			break;
+		}
+
+		if (pf_profiling_setup(cpu, i, &conf_arr[i]) != 0) {
+			ret = -1;
+			printf("init err \n");
+			break;
+		}
+
+	}
+
+	if (ret != 0) {
+		pf_resource_free(cpu);
+	}
+
+	return (ret);
+}
+
+
 
 //TODO return values
-int setup_sampling(perf_cpu_t *cpus){
+int setup_sampling(perf_cpu_t *cpus_ll,perf_cpu_t *cpus_pf ){
 	for(int i=0; i<32; i++){
-		memset((cpus+i),0,sizeof(perf_cpu_t));
-		cpus[i].cpuid=i;
-		pf_ll_setup((cpus+i));
+		memset((cpus_ll+i),0,sizeof(perf_cpu_t));
+		memset((cpus_pf+i),0,sizeof(perf_cpu_t));
+		cpus_ll[i].cpuid=i;
+		cpus_pf[i].cpuid=i;
+		cpu_profiling_setup(cpus_pf+i,NULL);
+		pf_ll_setup(cpus_ll+i);		
 	}
+	
 	return  0;
 }
 
 //TODO return values
-int start_sampling(perf_cpu_t *cpus){
+int start_sampling(perf_cpu_t *cpus_ll,perf_cpu_t *cpus_pf){
 	for(int i=0; i<32; i++){
-		pf_ll_start((cpus+i));
+		pf_profiling_start((cpus_pf+i),0);
+		pf_profiling_start((cpus_pf+i),1);
+		pf_ll_start((cpus_ll+i));
+		
 	}
-		return 0;
-}
+	return 0;
+}	
+	
+
 
 void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current){
 	
@@ -449,13 +796,15 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 }
 
 //TODO return values
-int read_samples(perf_cpu_t *cpus, pf_ll_rec_t *record, struct sampling_settings *st){
-	int nrec=0;
+int read_samples(perf_cpu_t *cpus_ll, perf_cpu_t *cpus_pf, pf_ll_rec_t *record, struct sampling_settings *st){
+	int nrec=0,nrec2=0;
 	int bef=0, wr_diff=0,current;
+	pf_profiling_rec_t* record_pf=malloc(sizeof(pf_profiling_rec_t)*1000);
 	for(;;){
 	readagain:	for(int i=0; i<32; i++){
 			bef=nrec;
-			pf_ll_record((cpus+i),record,&nrec);
+			pf_ll_record((cpus_ll+i),record,&nrec);
+			pf_profiling_record((cpus_pf+i),record_pf,&nrec2);
 			wr_diff=nrec >= bef ? nrec > bef : nrec+BUFFER_SIZE-bef;
 			
 			while(wr_diff>0){
@@ -468,11 +817,22 @@ int read_samples(perf_cpu_t *cpus, pf_ll_rec_t *record, struct sampling_settings
 				wr_diff--;
 			}
 			if(end_s)
-				return;
+				return 0;
 		}
 	}
 	
 	return 0;
+}
+void* controlpr(void *arg){
+	struct prof_config *pc=(struct prof_config*)arg;
+	pf_profiling_rec_t* record=malloc(sizeof(pf_profiling_rec_t)*1000);
+	int nrec=10000;
+	for(int j=0; j<1000000; j++){
+		for(int i=0; i<32; i++){
+			pf_profiling_record((pc->cpus+i),record,&nrec);
+		};
+		
+	}
 }
 
 void* controlsamp(void *arg){
@@ -492,7 +852,8 @@ int main(int argc, char **argv)
 	//get pid from command line
 	pid = argc > 1 && atoi(argv[1])>0 ? atoi(argv[1]) : -1;
 	//TODO check filling of cpu field
-	perf_cpu_t *cpus= malloc(sizeof(perf_cpu_t)*32);
+	perf_cpu_t *cpus_ll= malloc(sizeof(perf_cpu_t)*32);
+	perf_cpu_t *cpus_pf= malloc(sizeof(perf_cpu_t)*32);
 	struct sampling_settings st;
 	
 	//TODO dynamic implementation
@@ -502,7 +863,7 @@ int main(int argc, char **argv)
 	
 	end_s=0;
 	int fake_transl[32]={0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0};
-	pthread_t cthread;
+	pthread_t cthread,prthreads;
 	pthread_create(&cthread,NULL,&controlsamp, NULL);
 	
 	memset(&(st.metrics),0,sizeof(struct sampling_metrics));
@@ -510,13 +871,16 @@ int main(int argc, char **argv)
 	st.core_to_cpu=malloc(sizeof(int)*st.n_cores);
 	
 	st.core_to_cpu=fake_transl;
-	setup_sampling(cpus);
-	start_sampling(cpus);
-	
+	setup_sampling(cpus_ll,cpus_pf);
+	start_sampling(cpus_ll,cpus_pf);
+	struct prof_config pc;
+	pc.cpus=cpus_pf;
+	//pthread_create(&prthreads,NULL,&controlpr, &pc);
 	//circular buffer for storing the load latency samples
+	//controlpr(&pc);
 	pf_ll_rec_t* record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
 	
-	read_samples(cpus,record,&st);
+	read_samples(cpus_ll,cpus_pf,record,&st);
 	print_statistics(&st);
 	printf("fin\n");
 	return 0;
