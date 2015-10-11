@@ -1,9 +1,12 @@
 #CFLAGS=-g -O0
 CC=gcc
-CFLAGS=-O2 -g -std=gnu99 -lpthread -fdiagnostics-color
+CFLAGS=-O2 -g -std=gnu99 -lpthread -lnuma -fdiagnostics-color
 
-all: launcher.o perf_helpers.o sample_processing.o
-	$(CC) -o spm launcher.o perf_helpers.o sample_processing.o  $(CFLAGS)
+all: launcher.o perf_helpers.o sample_processing.o control.o
+	$(CC) -o spm launcher.o perf_helpers.o sample_processing.o control.o $(CFLAGS)
+	
+control.o:	control.c spm.h
+	$(CC) -c control.c $(CFLAGS)
 	
 launcher.o: launcher.c  spm.h
 	$(CC) -c launcher.c  $(CFLAGS)

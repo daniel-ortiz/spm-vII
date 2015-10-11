@@ -36,15 +36,15 @@
 
 #include "spm.h"
 
-#define COUNT_NUM   2
-#define IP_NUM	32
+
+
 #define KERNEL_ADDR_START	0xffffffff80000000
 #define INVALID_FD	-1
 #define INVALID_CONFIG	(uint64_t)(-1)
 #define PF_MAP_NPAGES_MAX           1024
 #define PF_MAP_NPAGES_MIN           64
 #define PF_MAP_NPAGES_NORMAL        256
-#define BUFFER_SIZE					500
+
 
 #define rmb() asm volatile("lock; addl $0,0(%%esp)" ::: "memory")
 
@@ -54,14 +54,7 @@ typedef enum {
 	PRECISE_LOW
 } precise_type_t;
 
-typedef struct _count_value {
-	uint64_t counts[COUNT_NUM];
-} count_value_t;
 
-typedef enum {
-	B_FALSE = 0,
-	B_TRUE
-} boolean_t;
 
 typedef enum {
 	COUNT_INVALID = -1,
@@ -71,19 +64,6 @@ typedef enum {
 	COUNT_IR,
 	COUNT_LMA
 } count_id_t;
-
-typedef struct _perf_cpu {
-	int cpuid;
-	int fds[COUNT_NUM];
-	int group_idx;
-	int map_len;
-	int map_mask;
-	void *map_base;
-	boolean_t hit;
-	boolean_t hotadd;
-	boolean_t hotremove;
-	count_value_t countval_last;
-} perf_cpu_t;
 
 typedef struct _pf_profiling_rec {
 	unsigned int pid;
@@ -102,16 +82,6 @@ typedef struct _pf_conf {
 	uint64_t sample_period;
 } pf_conf_t;
 
-typedef struct _pf_ll_rec {
-	unsigned int pid;
-	unsigned int tid;
-	uint64_t addr;
-	uint64_t cpu;
-	uint64_t latency;
-	unsigned int ip_num;
-	uint64_t ips[IP_NUM];
-	union perf_mem_data_src data_source;
-} pf_ll_rec_t;
 
 
 struct prof_config{
@@ -557,7 +527,15 @@ int pf_profiling_start(struct _perf_cpu *cpu, count_id_t count_id)
 	return (0);
 }
 
-
+int
+pf_profiling_stop(struct _perf_cpu *cpu, count_id_t count_id)
+{
+	if (cpu->fds[count_id] != INVALID_FD) {
+		return (ioctl(cpu->fds[count_id], PERF_EVENT_IOC_DISABLE, 0));
+	}
+	
+	return (0);
+}
 
 int pf_ll_setup(struct _perf_cpu *cpu)
 {
@@ -635,6 +613,16 @@ pf_ll_start(struct _perf_cpu *cpu)
 {
 	if (cpu->fds[0] != INVALID_FD) {
 		return (ioctl(cpu->fds[0], PERF_EVENT_IOC_ENABLE, 0));
+	}
+	
+	return (0);
+}
+
+int
+pf_ll_stop(struct _perf_cpu *cpu)
+{
+	if (cpu->fds[0] != INVALID_FD) {
+		return (ioctl(cpu->fds[0], PERF_EVENT_IOC_DISABLE, 0));
 	}
 	
 	return (0);
@@ -787,12 +775,14 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 	st->metrics.process_samples[core]++;
 	int access_type= filter_local_accesses(&(record[current].data_source));
 	//TODO this depends on the page size
-	u64 mask=0xFFF, page_addr;
+	u64 mask=0xFFF;
 	u64 page_sampled=record[current].addr & ~mask ;
 	
 	add_mem_access( st, (void*)page_sampled, core);
 	add_lvl_access( st, &(record[current].data_source),record[current].latency );
-	
+	if(!access_type){
+		add_page_2move(st,page_sampled );
+	}
 }
 
 //TODO return values
@@ -804,7 +794,7 @@ int read_samples(perf_cpu_t *cpus_ll, perf_cpu_t *cpus_pf, pf_ll_rec_t *record, 
 	readagain:	for(int i=0; i<32; i++){
 			bef=nrec;
 			pf_ll_record((cpus_ll+i),record,&nrec);
-			pf_profiling_record((cpus_pf+i),record_pf,&nrec2);
+			//pf_profiling_record((cpus_pf+i),record_pf,&nrec2);
 			wr_diff=nrec >= bef ? nrec > bef : nrec+BUFFER_SIZE-bef;
 			
 			while(wr_diff>0){
@@ -816,7 +806,7 @@ int read_samples(perf_cpu_t *cpus_ll, perf_cpu_t *cpus_pf, pf_ll_rec_t *record, 
 				current=current != BUFFER_SIZE-1 ? current++ : 0;
 				wr_diff--;
 			}
-			if(end_s)
+			if(st->end_recording)
 				return 0;
 		}
 	}
@@ -841,8 +831,13 @@ void* controlsamp(void *arg){
 	end_s=1;
 	printf("end of measurement \n");
 }
+void init_globals(){
+	pagesize_init();
+	g_precise=PRECISE_HIGH;
+	pf_ringsize_init();
+}
 	
-int main(int argc, char **argv)
+int mains(int argc, char **argv)
 {
 	pagesize_init();
 	g_precise=PRECISE_HIGH;
