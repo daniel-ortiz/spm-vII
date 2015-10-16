@@ -3,8 +3,10 @@
 #include <stdio.h>
 #include <errno.h>
 #include <numaif.h>
+#include <unistd.h>
 #include <numa.h>
 #include <time.h>
+#include <sys/time.h>
 #include "spm.h"
 
 
@@ -140,22 +142,31 @@ void add_freq_access(struct sampling_settings *ss, int frequency){
 void print_statistics(struct sampling_settings *ss){
 		struct sampling_metrics m=ss->metrics;
 		struct page_stats *current,*tmp;
-		struct freq_stats *crr,*tmpf;	
-		printf("ts %d \n", m.total_samples);
-		int i,freq;
+		struct access_stats *crr_lvl,*lvltmp;
+		struct freq_stats *crr,*tmpf;
+		int i,freq,total_proc_samples=0;
 		int ubound,lbound;
-		char * lbl="TODO-setlabel";
+		char  *lblstr, *lbl="TODO-setlabel";
+		lbl = !ss->output_label ? lbl : ss->output_label;
+		printf("\t\t\t MIGRATION STATISTICS\n\n");
+		printf("\t %s total samples: %d \n\n",lbl, m.total_samples);		
 		
 		for(i=0; i<ss->n_cores;i++){
-				printf("cpu %d:  %d \n",  i, m.process_samples[i]);
+				total_proc_samples+=m.process_samples[i];
+				printf("%s cpu %d:  %d / %d \n",lbl,  i,  m.remote_samples[i],m.process_samples[i]);
 		}
-		
+		printf("\t %s PID %d total process samples: %d \n\n\n",lbl,ss->pid_uo, m.total_samples);
+		printf("BREAKDOWN BY LOAD LATENCY\n\n");
 		for(i=0; i<WEIGHT_BUCKETS_NR; i++){
 			lbound=i*WEIGHT_BUCKET_INTERVAL;
 			ubound=(i+1)*WEIGHT_BUCKET_INTERVAL;
 			printf("%s :%d-%d: %d\n", lbl,lbound,ubound, ss->metrics.access_by_weight[i]);
 		}
-	
+		printf("\n\n BREAKDOWN BY ACCESS LEVEL\n\n");
+		HASH_ITER(hh, ss->metrics.lvl_accesses, crr_lvl, lvltmp) {
+			lblstr=print_access_type(crr_lvl->mem_lvl);
+			printf("%s:LEVEL count %d %s \n", lbl,  crr_lvl->count, lblstr);
+		}
 		HASH_SORT( ss->metrics.page_accesses, id_sort );
 		
 		HASH_ITER(hh, ss->metrics.page_accesses, current, tmp) {
@@ -168,7 +179,7 @@ void print_statistics(struct sampling_settings *ss){
 		}
 		
 		HASH_SORT( ss->metrics.freq_accesses, freq_sort );
-		
+		printf("\n\n BREAKDOWN BY FREQUENCY OF PAGE ACCESSES \n\n");
 		HASH_ITER(hh, ss->metrics.freq_accesses, crr, tmpf) {
 			printf("%s:pages accessed:%d:%d \n",lbl,crr->freq,crr->count);
 		}
@@ -258,4 +269,117 @@ void do_great_migration(struct sampling_settings *ss){
 	ss->moved_pages=succesfully_moved;
 	printf("%d lem/rte accesses, attempt to move %d, %d pages moved successfully, move pages time %f \n",count2,count,succesfully_moved,tfin);
  
+}
+
+int* get_cpu_interval(int max_cores, char* siblings ){
+	int* sibling_array,i;
+	char *savep1,*savep2;
+	char* tok=strtok_r(siblings, ",",&savep1),*tokcpy;
+	int high, low;
+	char *interval1,*interval2;
+	if(max_cores < 1) return NULL;
+	
+	sibling_array=malloc(sizeof(int)*max_cores);
+	
+	//initialize array
+	
+	for (i=0; i<max_cores; i++) sibling_array[i]=-1;
+		
+	
+	if(tok==NULL) return 0;
+	do{
+		tokcpy=(char*)malloc(sizeof(char)*strlen(tok));
+		strcpy(tokcpy,tok);
+		//process subtoken, that must be in the form #-#
+		interval1=strtok_r(tokcpy,"-",&savep2);
+		if(interval1!=NULL){
+			interval2=strtok_r(NULL,"-",&savep2);
+			if(interval2!=NULL){
+			//process interval	
+			low=atoi(interval1);
+			high=atoi(interval2);
+			if(low<high && high>0 && low>=0 && high<max_cores && low < max_cores && high < max_cores){
+				for(i=low; i<=high; i++) 
+				sibling_array[i]=1;
+			}
+			
+			}
+		} 
+		tok=strtok_r(NULL, ",",&savep1);
+	}while(tok !=NULL);
+	
+	return sibling_array;
+}
+
+void init_processor_mapping(struct sampling_settings *ss, struct cpu_topo *topol){
+
+	int i,j,*siblings;
+	int *core_to_node;
+	int max_cores=0;
+	
+	//the new part begins here
+	max_cores=ss->n_cores;
+	core_to_node=malloc(sizeof(int)*max_cores);
+	for(j=0; j<max_cores; j++){
+		*(core_to_node+j)=-1;
+	}
+	
+	for(i=0; i< ss->n_cpus;i++){
+		siblings=get_cpu_interval(max_cores, topol->core_siblings[i]);
+		if(!siblings) continue;
+		for(j=0; j<max_cores; j++)
+			*(core_to_node+j) = siblings[j]==1 ? i : *(core_to_node+j) ; 
+			free(siblings);
+	}
+	
+	for(i=0; i<max_cores;i++) 
+	ss->core_to_cpu[i]=core_to_node[i];
+	
+	free(core_to_node);
+}
+
+void free_metrics(struct sampling_metrics *sm){
+	struct page_stats *current,*tmp;
+	struct access_stats *crr_lvl,*lvltmp;
+	struct freq_stats *crr,*tmpf;
+	if(sm->process_samples)
+		free(sm->process_samples);
+	if(sm->remote_samples)
+		free(sm->remote_samples);
+		
+	if(sm->page_accesses){
+		HASH_ITER(hh, sm->page_accesses, current, tmp) {
+				if(current){
+				//unlink from the list
+				
+				HASH_DEL( sm->page_accesses, current);
+				//chao
+				free(current);
+				}
+		}
+	}
+	if(sm->lvl_accesses){
+	HASH_ITER(hh, sm->lvl_accesses, crr_lvl, lvltmp) {
+			if(crr_lvl){
+				//unlink from the list
+				HASH_DEL( sm->lvl_accesses, crr_lvl);
+				//chao
+				free(crr_lvl);
+				}
+		}
+	}
+	
+	if(sm->freq_accesses){
+			HASH_ITER(hh, sm->freq_accesses, crr, tmpf) {
+				if(crr){
+					//unlink from the list
+					HASH_DEL( sm->freq_accesses, crr);
+					//chao
+					free(crr);
+					}
+				}
+		}
+	
+//	free(sm);
+	
 }
