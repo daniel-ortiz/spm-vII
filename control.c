@@ -44,6 +44,13 @@ void *control_spm (void *arg){
 	
 	print_statistics(ss);
 	
+	if(ss->only_sample){
+		printf("MIG-CTRL> will end because it is only a measurement run \n");
+		stop_sampling(ss);
+		ss->end_recording=1;
+		return 0;
+	}
+	
 	do_great_migration(ss);
 	
 	old_sm=ss->metrics;
@@ -154,10 +161,12 @@ int init_spm(struct sampling_settings *ss){
 #ifdef STANDALONE
 int main(int argc, char **argv)
 {	struct sampling_settings st;
-	int pid;
+	int pid,period,wmin,mtime;
 	const char* cmd;
+	char* lbl;
 	memset(&st,0,sizeof(struct sampling_settings));
 	st.pid_uo= -1; 
+	st.only_sample=0;
 	if (argc < 3){
 			printf("MIG-CTRL> missing arguments \n");
 			return 0;
@@ -172,6 +181,45 @@ int main(int argc, char **argv)
 		st.command2_launch = (const char**)&argv[2];
 		st.argv_size=argc-2;	
 	}
+	
+	 if ( argc > 2 && !strcmp(argv[1],"-per") && argv[2] ){
+		period=atoi(argv[2]);
+		if(period > 0){
+			st.ll_sampling_period=period;
+		}
+	}
+	
+	 if ( argc > 4 && !strcmp(argv[3],"-wmin") && argv[4] ){
+		wmin=atoi(argv[4]);
+		if(wmin > 0){
+			st.ll_weight_threshold=wmin;
+		}
+	}
+	
+	 if ( argc > 6 && !strcmp(argv[5],"-mtime") && argv[6] ){
+		mtime=atoi(argv[6]);
+		if(lbl > 0){
+			st.measure_time=mtime;
+		}
+	}
+	
+	 if ( argc > 8 && !strcmp(argv[7],"-lbl") && argv[8] ){
+		lbl=argv[8];
+		if(strlen(lbl) > 0){
+			st.output_label=lbl;
+		}
+	}
+	if ( argc > 9 && !strcmp(argv[9],"-onlysample")  ){
+		st.only_sample=1;
+	}
+	
+	
+	 if ( argc > 11 && !strcmp(argv[10],"-cmd") && argv[11] ){
+		st.command2_launch = (const char**)&argv[11];
+		st.argv_size=argc-11;	
+		
+	}
+	
 
 	init_spm(&st);
 	return 0;

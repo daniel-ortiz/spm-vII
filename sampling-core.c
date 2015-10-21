@@ -545,7 +545,7 @@ int pf_ll_setup(struct _perf_cpu *cpu, struct sampling_settings *ss )
 	memset(&attr, 0, sizeof (attr));
 	attr.type = 4;
 	attr.config = 461;
-	attr.config1 = 148;
+	attr.config1 = ss->ll_weight_threshold;
 	attr.sample_period = ss->ll_sampling_period;
 	attr.precise_ip = 1;
 	attr.exclude_guest = 1;

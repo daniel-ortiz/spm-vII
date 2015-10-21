@@ -110,6 +110,7 @@ struct sampling_metrics {
 	perf_cpu_t *cpus_ll;
 	perf_cpu_t *cpus_pf;
 	boolean_t end_recording;
+	boolean_t only_sample;
 	struct l3_addr *pages_2move;
 	int number_pages2move;
 	int moved_pages;
@@ -141,3 +142,4 @@ int setup_sampling(struct sampling_settings *ss);
 int start_sampling(struct sampling_settings *ss);
 int launch_command( const char** argv, int argc);
 int stop_sampling(struct sampling_settings *ss);
+int init_spm(struct sampling_settings *ss);

@@ -351,8 +351,8 @@ void free_metrics(struct sampling_metrics *sm){
 		HASH_ITER(hh, sm->page_accesses, current, tmp) {
 				if(current){
 				//unlink from the list
-				
 				HASH_DEL( sm->page_accesses, current);
+				//printf("%p ",current->page_addr);
 				//chao
 				free(current);
 				}
