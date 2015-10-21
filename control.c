@@ -45,6 +45,7 @@ void *control_spm (void *arg){
 	print_statistics(ss);
 	
 	if(ss->only_sample){
+		kill(ss->pid_uo,9);
 		printf("MIG-CTRL> will end because it is only a measurement run \n");
 		stop_sampling(ss);
 		ss->end_recording=1;
