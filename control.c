@@ -51,8 +51,10 @@ void *control_spm (void *arg){
 		ss->end_recording=1;
 		return 0;
 	}
-	
+
 	do_great_migration(ss);
+
+	printf("** %d\n",ss->number_pages2move);
 	
 	old_sm=ss->metrics;
 	free_metrics(&old_sm);

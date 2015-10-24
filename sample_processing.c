@@ -188,11 +188,12 @@ void print_statistics(struct sampling_settings *ss){
 void do_great_migration(struct sampling_settings *ss){
 	struct l3_addr *current=ss->pages_2move;
 	void **pages;
-	int ret,count=0,count2=0,*nodes,*nodes_query, *status,i,succesfully_moved=0,destination_node=0,greatest_count=0;
+	int ret,count=0,count2=0,*nodes,*nodes_query, *status,i,succesfully_moved=0,destination_node=0,greatest_count=0,truncated=0;
 	double tinit=0, tfin=0;
 	struct page_stats *sear=NULL;
 
-	printf("l3accesses %d \n",ss->number_pages2move);
+	start_mig:
+	printf("l3 accesses %d \n",ss->number_pages2move);
 	pages=malloc(sizeof(void*) * ss->number_pages2move);
 	status=malloc(sizeof(int) * ss->number_pages2move);
 	nodes_query=malloc(sizeof(int) * ss->number_pages2move);
@@ -203,7 +204,7 @@ void do_great_migration(struct sampling_settings *ss){
 		current=current->next;	
 		count++;
 	}
-	
+	exit_loop:
 	move_pages(ss->pid_uo, count, pages, nodes_query, status,0);
 	
 	count=0;
@@ -240,11 +241,20 @@ void do_great_migration(struct sampling_settings *ss){
 		count2++;
 		*(nodes+count)=destination_node;
 		
+		/**
+		 * The number has to be restricted because apparently a large array size causes segfault
+		 */
+		if(count2 == MAX_SINGLE_MIGRATE){
+			ss->pages_2move=current;
+			printf("will restrict the number of processed pages %d %d %d\n",ss->number_pages2move, count, count2);
+			truncated=1;
+			goto init_move;
+		}
 	}
-	
+	ss->number_pages2move-=count2;
 	//if(ss->migrate_chunk_size >0 )
 	//	count=ss->migrate_chunk_size;
-		
+	init_move:	
 	tinit=wtime();
 	ret= 	move_pages(ss->pid_uo, count, pages, nodes, status,0);
 	
@@ -266,9 +276,16 @@ void do_great_migration(struct sampling_settings *ss){
 	
 	
 	
-	ss->moved_pages=succesfully_moved;
+	ss->moved_pages+=succesfully_moved;
 	printf("%d lem/rte accesses, attempt to move %d, %d pages moved successfully, move pages time %f \n",count2,count,succesfully_moved,tfin);
- 
+	
+	if(truncated){
+		count=0;
+		count2=0;
+		truncated=0;
+		succesfully_moved=0;
+		goto start_mig;	
+	}
 }
 
 int* get_cpu_interval(int max_cores, char* siblings ){
@@ -347,11 +364,12 @@ void free_metrics(struct sampling_metrics *sm){
 	if(sm->remote_samples)
 		free(sm->remote_samples);
 		
+		//disabled because of aparent segfault problems with this freeing
 	if(sm->page_accesses){
 		HASH_ITER(hh, sm->page_accesses, current, tmp) {
 				if(current){
 				//unlink from the list
-				HASH_DEL( sm->page_accesses, current);
+				//HASH_DEL( sm->page_accesses, current);
 				//printf("%p ",current->page_addr);
 				//chao
 				//free(current);
