@@ -65,14 +65,7 @@ typedef enum {
 	COUNT_LMA
 } count_id_t;
 
-typedef struct _pf_profiling_rec {
-	unsigned int pid;
-	unsigned int tid;
-	uint64_t period;
-	count_value_t countval;
-	unsigned int ip_num;
-	uint64_t ips[IP_NUM];
-} pf_profiling_rec_t;
+
 
 typedef struct _pf_conf {
 	count_id_t count_id;
@@ -351,7 +344,12 @@ profiling_recbuf_update(pf_profiling_rec_t *rec_arr, int *nrec,
 	 */
 	i = *nrec;
 	memcpy(&rec_arr[i], rec, sizeof (pf_profiling_rec_t));
-	*nrec += 1;
+
+	if(*nrec == BUFFER_SIZE-1){
+		*nrec=0;
+	}else{
+		*nrec += 1;
+	}
 }
 
 static uint64_t
@@ -433,9 +431,9 @@ profiling_sample_read(struct perf_event_mmap_page *mhdr, int size,
 		 */
 		value = scale(value, time_enabled, time_running);
 		countval->counts[i] = value;
-		printf("v %lu ", value);
+		//printf("v %lu ", value);
 	}
-	printf("\n");
+//	printf("\n");
 
 	if (mmap_buffer_read(mhdr, &nr, sizeof (nr)) == -1) {
 		printf( "profiling_sample_read: read nr failed.\n");
@@ -490,8 +488,8 @@ void pf_profiling_record(struct _perf_cpu *cpu, pf_profiling_rec_t *rec_arr,
 	pf_profiling_rec_t rec;
 	int size;
 
-	if (nrec != NULL) {
-		*nrec = 0;
+	if (nrec == NULL) {
+		printf("erroneous reference to record position");
 	}
 
 	for (;;) {
@@ -505,7 +503,7 @@ void pf_profiling_record(struct _perf_cpu *cpu, pf_profiling_rec_t *rec_arr,
 		}
 
 		if ((ehdr.type == PERF_RECORD_SAMPLE) && (rec_arr != NULL)) {
-			printf("-  %d cpu --",cpu->cpuid );
+			//printf("sample-id* %d %d \n-",cpu->cpuid, *nrec );
 			if (profiling_sample_read(mhdr, size, &rec) == 0) {
 				profiling_recbuf_update(rec_arr, nrec, &rec);
 			} else {
@@ -739,8 +737,11 @@ int setup_sampling(struct sampling_settings *ss){
 		memset((ss->cpus_pf+i),0,sizeof(perf_cpu_t));
 		ss->cpus_ll[i].cpuid=i;
 		ss->cpus_pf[i].cpuid=i;
-		cpu_profiling_setup(ss->cpus_pf+i,NULL);
-		pf_ll_setup(ss->cpus_ll+i,ss);		
+
+		pf_ll_setup(ss->cpus_ll+i,ss);
+		if(ss->pf_measurements){
+			cpu_profiling_setup(ss->cpus_pf+i,NULL);
+		}
 	}
 	
 	return  0;
@@ -749,8 +750,10 @@ int setup_sampling(struct sampling_settings *ss){
 //TODO return values
 int start_sampling(struct sampling_settings *ss){
 	for(int i=0; i<ss->n_cores; i++){
-		pf_profiling_start((ss->cpus_pf+i),0);
-		pf_profiling_start((ss->cpus_pf+i),1);
+		if(ss->pf_measurements){
+			pf_profiling_start((ss->cpus_pf+i),0);
+			pf_profiling_start((ss->cpus_pf+i),1);
+		}
 		pf_ll_start((ss->cpus_ll+i));
 		
 	}
@@ -759,68 +762,66 @@ int start_sampling(struct sampling_settings *ss){
 
 int stop_sampling(struct sampling_settings *ss){
 	for(int i=0; i<ss->n_cores; i++){
-		pf_profiling_stop((ss->cpus_pf+i),0);
-		pf_profiling_stop((ss->cpus_pf+i),1);
+		if(ss->pf_measurements){
+			pf_profiling_stop((ss->cpus_pf+i),0);
+			pf_profiling_stop((ss->cpus_pf+i),1);
+		}
 		pf_ll_stop((ss->cpus_ll+i));
 		
 	}
 	return 0;
 	
 }
-	
+int read_pf_samples(struct sampling_settings *ss,pf_profiling_rec_t* pf_record ){
+	int nrec_pf=0;
+	int last_read_pf=0,wr_diff_pf=0,current;
+
+		readagain:	for(int i=0; i<ss->n_cores; i++){
+
+				last_read_pf=nrec_pf;
+
+				pf_profiling_record((ss->cpus_pf+i),pf_record,&nrec_pf);
+				wr_diff_pf=nrec_pf >= last_read_pf ? nrec_pf - last_read_pf : nrec_pf+BUFFER_SIZE-last_read_pf;
+
+				while(wr_diff_pf>0){
+					current=nrec_pf-wr_diff_pf;
+					current = current < 0 ? BUFFER_SIZE+current : current;
+					//here we consume the sample
+					 update_pf_reading(ss,  pf_record, current,(ss->cpus_pf+i));
+					current=current != BUFFER_SIZE-1 ? current++ : 0;
+					wr_diff_pf--;
+				}
+	 		}
 
 
-void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current){
-	
-	int core=record[current].cpu;
-	if(record[current].cpu <0 || record[current].cpu >= st->n_cores){
-		return;
-	}
-	//TODO counter with mismatching number of cpus
-	
-	st->metrics.total_samples++;
-	//TODO also get samples from the sampling process, detect high overhead
-	if(record[current].pid != st->pid_uo){
-		return; }
-	
-	st->metrics.process_samples[core]++;
-	int access_type= filter_local_accesses(&(record[current].data_source));
-	//TODO this depends on the page size
-	u64 mask=0xFFF;
-	u64 page_sampled=record[current].addr & ~mask ;
-	
-	add_mem_access( st, (void*)page_sampled, core);
-	add_lvl_access( st, &(record[current].data_source),record[current].latency );
-	if(!access_type){
-		st->metrics.remote_samples[core]++;
-		add_page_2move(st,page_sampled );
-	}
 }
 
+
 //TODO return values
-int read_samples(struct sampling_settings *ss, pf_ll_rec_t *record){
-	int nrec=0,nrec2=0;
-	int bef=0, wr_diff=0,current;
-	pf_profiling_rec_t* record_pf=malloc(sizeof(pf_profiling_rec_t)*1000);
+int read_ll_samples(struct sampling_settings *ss, pf_ll_rec_t *ll_record ){
+	int nrec_ll=0;
+	int last_read_ll=0, wr_diff_ll=0,current;
+
 	for(;;){
 	readagain:	for(int i=0; i<ss->n_cores; i++){
-			bef=nrec;
-			pf_ll_record((ss->cpus_ll+i),record,&nrec);
-			//pf_profiling_record((ss->cpus_pf+i),record_pf,&nrec2);
-			wr_diff=nrec >= bef ? nrec > bef : nrec+BUFFER_SIZE-bef;
+			last_read_ll=nrec_ll;
+
+			pf_ll_record((ss->cpus_ll+i),ll_record,&nrec_ll);
+			wr_diff_ll=nrec_ll >= last_read_ll ? nrec_ll - last_read_ll : nrec_ll+BUFFER_SIZE-last_read_ll;
 			
-			while(wr_diff>0){
-				current=nrec-wr_diff;
-				current = current < 0 ? BUFFER_SIZE+current : current;
-				//here we consume the sample
-				//printf("%lu %d %d *", (record + current)->latency, nrec, current);
-				consume_sample(ss,record,current);
-				current=current != BUFFER_SIZE-1 ? current++ : 0;
-				wr_diff--;
-			}
 			if(ss->end_recording)
 				return 0;
-		}
+
+			//read the ll samples until catching up with what was read
+			while(wr_diff_ll>0){
+				current=nrec_ll-wr_diff_ll;
+				current = current < 0 ? BUFFER_SIZE+current : current;
+				//here we consume the sample
+				consume_sample(ss,ll_record,current);
+				current=current != BUFFER_SIZE-1 ? current++ : 0;
+				wr_diff_ll--;
+			}
+ 		}
 	}
 	
 	return 0;

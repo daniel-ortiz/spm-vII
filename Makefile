@@ -1,6 +1,6 @@
 #CFLAGS=-g -O0
-CC=gcc
-CFLAGS=-O0 -g -std=gnu99 -lpthread -lnuma -fdiagnostics-color -DSTANDALONE=1
+CC=gcc-4.8
+CFLAGS=-O0 -g -std=gnu99 -lpthread -lnuma -DSTANDALONE=1
 
 all: sampling-core.o perf_helpers.o sample_processing.o control.o
 	$(CC) -o spm sampling-core.o perf_helpers.o sample_processing.o control.o $(CFLAGS)
