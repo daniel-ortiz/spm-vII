@@ -22,7 +22,7 @@ typedef __u32 u32;
          "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list"
          
 //NUMBER OF PERFORMANCE counters to use
-#define COUNT_NUM   2
+#define COUNT_NUM   3
 //number of samples in cirbular buffer
 #define BUFFER_SIZE					500
 
@@ -100,9 +100,9 @@ struct sampling_metrics {
 	int total_samples;
 	int *process_samples;
 	int *remote_samples;
-	int **pf_last_values;
-	int **pf_diff_values;
-	int **pf_read_values;
+	int *pf_last_values;
+	int *pf_diff_values;
+	int *pf_read_values;
 	struct page_stats *page_accesses;
 	struct access_stats *lvl_accesses;
 	struct freq_stats *freq_accesses;

@@ -42,8 +42,7 @@ void *control_spm (void *arg){
 	
 	measuring_time=ss->measure_time > 0 ? ss->measure_time : DEFAULT_MEASURE_TIME ;
 	
-	//sleep(20);
-	
+
 	int wait_res= wait_watch_process( measuring_time,ss);
 	
 	if(wait_res) goto end_noproc;
@@ -73,6 +72,12 @@ void *control_spm (void *arg){
 	sm->remote_samples=malloc(sizeof(int)*ss->n_cores);
 	memset(sm->process_samples,0,sizeof(int)*ss->n_cores);
 	memset(sm->remote_samples,0,sizeof(int)*ss->n_cores);
+	sm->pf_last_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	sm->pf_read_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	sm->pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	ss->metrics=*sm;
 	
 	

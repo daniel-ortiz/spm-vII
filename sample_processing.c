@@ -404,22 +404,29 @@ void free_metrics(struct sampling_metrics *sm){
 
 void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record, int current, struct _perf_cpu *cpu){
 	pf_profiling_rec_t sample;
-
+	int ncpu=cpu->cpuid;
+	int ncores=st->n_cores;
 	sample=record[current];
-	printf("profiling %d %lu %lu ", cpu->cpuid, sample.countval.counts[0], sample.countval.counts[1]);
+	//printf("profiling %d %lu %lu ", cpu->cpuid, sample.countval.counts[0], sample.countval.counts[1]);
 	//updates the found value
 	for(int i=0; i<COUNT_NUM; i++){
-		st->metrics.pf_read_values[i][cpu->cpuid]=sample.countval.counts[i];
+		//*(st->metrics.pf_read_values+i*ncores+ncpu)
+		*(st->metrics.pf_read_values+i*ncores+ncpu)=sample.countval.counts[i];
+		//st->metrics.pf_read_values[i][cpu->cpuid]=sample.countval.counts[i];
 	}
 
 }
 
 void calculate_pf_diff(struct sampling_settings *st){
+	int ncores=st->n_cores;
 	for(int i=0; i<COUNT_NUM; i++){
 		for(int j=0; j<st->n_cores; j++){
-			st->metrics.pf_diff_values[i][j]=st->metrics.pf_read_values[i][j]-st->metrics.pf_last_values[i][j];
-			st->metrics.pf_last_values[i][j]=st->metrics.pf_read_values[i][j];
+			*(st->metrics.pf_diff_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j)-*(st->metrics.pf_last_values+i*ncores+j);
+			*(st->metrics.pf_last_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j);
+			//st->metrics.pf_last_values[i][j]=st->metrics.pf_read_values[i][j];
+			printf("%d %lu ",j, *(st->metrics.pf_diff_values+i*ncores+j) );
 		}
+		printf("\n");
 	}
 
 }
