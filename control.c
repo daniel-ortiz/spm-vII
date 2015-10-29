@@ -167,6 +167,8 @@ int init_spm(struct sampling_settings *ss){
 	if( ss->pid_uo==-1){
 		printf("MIG-CTRL> will launch external executable\n");
 		ss->pid_uo=launch_command(ss->command2_launch, ss->argv_size);
+	}else{
+		printf("MIG-CTRL> will watch pid %d\n",ss->pid_uo);
 	}
 	
 	if(pthread_create(&spm_thread,NULL,&run_numa_sampling, ss)){
@@ -246,10 +248,10 @@ int main(int argc, char **argv)
 		st.argv_size=argc-12;
 		
 	}
-	if ( argc > 11 && !strcmp(argv[10],"-pid") && argv[11] ){
-		pid =  atoi(argv[11])>0 ? atoi(argv[11]) : -1;
+	if ( argc > 11 && !strcmp(argv[11],"-pid") && argv[12] ){
+		pid =  atoi(argv[12])>0 ? atoi(argv[12]) : -1;
 		st.pid_uo= pid; 
-		st.argv_size=argc-11;
+		st.argv_size=argc-12;
 	}
 	
 
