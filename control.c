@@ -222,6 +222,11 @@ int main(int argc, char **argv)
 		st.argv_size=argc-11;	
 		
 	}
+	if ( argc > 11 && !strcmp(argv[10],"-pid") && argv[11] ){
+		pid =  atoi(argv[11])>0 ? atoi(argv[11]) : -1;
+		st.pid_uo= pid; 
+		st.argv_size=argc-11;
+	}
 	
 
 	init_spm(&st);
