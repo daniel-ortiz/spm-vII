@@ -22,7 +22,7 @@ typedef __u32 u32;
          "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list"
          
 //NUMBER OF PERFORMANCE counters to use
-#define COUNT_NUM   2
+#define COUNT_NUM   3
 //number of samples in cirbular buffer
 #define BUFFER_SIZE					500
 
@@ -64,6 +64,14 @@ typedef struct _pf_ll_rec {
 	union perf_mem_data_src data_source;
 } pf_ll_rec_t;
 
+typedef struct _pf_profiling_rec {
+	unsigned int pid;
+	unsigned int tid;
+	uint64_t period;
+	count_value_t countval;
+	unsigned int ip_num;
+	uint64_t ips[IP_NUM];
+} pf_profiling_rec_t;
 
 struct freq_stats{
 	int count;
@@ -92,6 +100,9 @@ struct sampling_metrics {
 	int total_samples;
 	int *process_samples;
 	int *remote_samples;
+	int *pf_last_values;
+	int *pf_diff_values;
+	int *pf_read_values;
 	struct page_stats *page_accesses;
 	struct access_stats *lvl_accesses;
 	struct freq_stats *freq_accesses;
@@ -112,6 +123,7 @@ struct sampling_metrics {
 	perf_cpu_t *cpus_pf;
 	boolean_t end_recording;
 	boolean_t only_sample;
+	boolean_t pf_measurements;
 	struct l3_addr *pages_2move;
 	int number_pages2move;
 	int moved_pages;
@@ -137,10 +149,14 @@ struct cpu_topo *build_cpu_topology(void);
 void init_processor_mapping(struct sampling_settings *ss, struct cpu_topo *topol);
 void do_great_migration(struct sampling_settings *ss);
 void free_metrics(struct sampling_metrics *sm);
-int read_samples(struct sampling_settings *ss, pf_ll_rec_t *record);
+int read_ll_samples(struct sampling_settings *ss, pf_ll_rec_t *ll_record );
+int read_pf_samples(struct sampling_settings *ss,pf_profiling_rec_t* pf_record );
 void init_globals();
 int setup_sampling(struct sampling_settings *ss);
 int start_sampling(struct sampling_settings *ss);
 int launch_command( const char** argv, int argc);
 int stop_sampling(struct sampling_settings *ss);
 int init_spm(struct sampling_settings *ss);
+void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current);
+void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record, int current, struct _perf_cpu *cpu);
+void calculate_pf_diff(struct sampling_settings *st);

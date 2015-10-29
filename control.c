@@ -10,9 +10,15 @@
 int wait_watch_process(int seconds,struct sampling_settings* ss){
 	int i=0,exit=0;
 	int sigres,*st=0,errn;
-	//every second it wakes up to make sure the process is alive
 
+	pf_profiling_rec_t* pf_record=malloc(sizeof(pf_profiling_rec_t)*BUFFER_SIZE);
+
+	//every second it wakes up to make sure the process is alive
 	while(!exit){
+		if(ss->pf_measurements){
+			read_pf_samples(ss,pf_record );
+			calculate_pf_diff(ss);
+		}
 		sleep(1);
 		sigres=kill(ss->pid_uo,0);
 		waitpid(ss->pid_uo,st,WNOHANG);
@@ -36,8 +42,7 @@ void *control_spm (void *arg){
 	
 	measuring_time=ss->measure_time > 0 ? ss->measure_time : DEFAULT_MEASURE_TIME ;
 	
-	//sleep(20);
-	
+
 	int wait_res= wait_watch_process( measuring_time,ss);
 	
 	if(wait_res) goto end_noproc;
@@ -57,7 +62,8 @@ void *control_spm (void *arg){
 	printf("** %d\n",ss->number_pages2move);
 	
 	old_sm=ss->metrics;
-	free_metrics(&old_sm);
+	//temporarily disable because of sporadic segfaults
+	//free_metrics(&old_sm);
 	
 
 	struct sampling_metrics *sm=malloc(sizeof(struct sampling_metrics));
@@ -66,6 +72,12 @@ void *control_spm (void *arg){
 	sm->remote_samples=malloc(sizeof(int)*ss->n_cores);
 	memset(sm->process_samples,0,sizeof(int)*ss->n_cores);
 	memset(sm->remote_samples,0,sizeof(int)*ss->n_cores);
+	sm->pf_last_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	sm->pf_read_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	sm->pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	ss->metrics=*sm;
 	
 	
@@ -90,7 +102,8 @@ void* run_numa_sampling(void *arg){
 	struct sampling_settings *ss=(struct sampling_settings* ) arg;
 	
 	//circular buffer for storing the load latency samples
-	pf_ll_rec_t* record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
+	pf_ll_rec_t* ll_record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
+
 	ss->end_recording=0;
 	//launch control thread
 	if(pthread_create(&control_thread,NULL,control_spm,ss)){
@@ -98,9 +111,9 @@ void* run_numa_sampling(void *arg){
 	}
 	
 	//will start recording samples
-	read_samples(ss,record);
+	read_ll_samples(ss,ll_record);
 	pthread_join(control_thread, NULL); 
-
+	printf("MIG-CTRL> sampling ended \n");
 }
 
 
@@ -131,6 +144,12 @@ int init_spm(struct sampling_settings *ss){
 	memset(&(ss->metrics),0,sizeof(struct sampling_metrics));
 	ss->metrics.process_samples=malloc(sizeof(int)*ss->n_cores);
 	ss->metrics.remote_samples=malloc(sizeof(int)*ss->n_cores);
+	ss->metrics.pf_last_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	ss->metrics.pf_read_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	ss->metrics.pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(ss->metrics.pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(ss->metrics.pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(ss->metrics.pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(ss->metrics.process_samples,0,sizeof(int)*ss->n_cores);
 	memset(ss->metrics.remote_samples,0,sizeof(int)*ss->n_cores);
 	ss->core_to_cpu=malloc(sizeof(int)*ss->n_cores);
@@ -170,6 +189,7 @@ int main(int argc, char **argv)
 	memset(&st,0,sizeof(struct sampling_settings));
 	st.pid_uo= -1; 
 	st.only_sample=0;
+	st.pf_measurements=0;
 	if (argc < 3){
 			printf("MIG-CTRL> missing arguments \n");
 			return 0;
@@ -216,10 +236,14 @@ int main(int argc, char **argv)
 		st.only_sample=1;
 	}
 	
+	if ( argc > 10 && !strcmp(argv[10],"-profilingsamples")  ){
+		st.pf_measurements=1;
+	}
+
 	
-	 if ( argc > 11 && !strcmp(argv[10],"-cmd") && argv[11] ){
-		st.command2_launch = (const char**)&argv[11];
-		st.argv_size=argc-11;	
+	 if ( argc > 11 && !strcmp(argv[11],"-cmd") && argv[12] ){
+		st.command2_launch = (const char**)&argv[12];
+		st.argv_size=argc-12;
 		
 	}
 	if ( argc > 11 && !strcmp(argv[10],"-pid") && argv[11] ){

@@ -401,3 +401,58 @@ void free_metrics(struct sampling_metrics *sm){
 //	free(sm);
 	
 }
+
+void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record, int current, struct _perf_cpu *cpu){
+	pf_profiling_rec_t sample;
+	int ncpu=cpu->cpuid;
+	int ncores=st->n_cores;
+	sample=record[current];
+	//printf("profiling %d %lu %lu ", cpu->cpuid, sample.countval.counts[0], sample.countval.counts[1]);
+	//updates the found value
+	for(int i=0; i<COUNT_NUM; i++){
+		//*(st->metrics.pf_read_values+i*ncores+ncpu)
+		*(st->metrics.pf_read_values+i*ncores+ncpu)=sample.countval.counts[i];
+		//st->metrics.pf_read_values[i][cpu->cpuid]=sample.countval.counts[i];
+	}
+
+}
+
+void calculate_pf_diff(struct sampling_settings *st){
+	int ncores=st->n_cores;
+	for(int i=0; i<COUNT_NUM; i++){
+		for(int j=0; j<st->n_cores; j++){
+			*(st->metrics.pf_diff_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j)-*(st->metrics.pf_last_values+i*ncores+j);
+			*(st->metrics.pf_last_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j);
+			//st->metrics.pf_last_values[i][j]=st->metrics.pf_read_values[i][j];
+			printf("%d %lu ",j, *(st->metrics.pf_diff_values+i*ncores+j) );
+		}
+		printf("\n");
+	}
+
+}
+void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current){
+
+	int core=record[current].cpu;
+	if(record[current].cpu <0 || record[current].cpu >= st->n_cores){
+		return;
+	}
+	//TODO counter with mismatching number of cpus
+
+	st->metrics.total_samples++;
+	//TODO also get samples from the sampling process, detect high overhead
+	if(record[current].pid != st->pid_uo){
+		return; }
+
+	st->metrics.process_samples[core]++;
+	int access_type= filter_local_accesses(&(record[current].data_source));
+	//TODO this depends on the page size
+	u64 mask=0xFFF;
+	u64 page_sampled=record[current].addr & ~mask ;
+
+	add_mem_access( st, (void*)page_sampled, core);
+	add_lvl_access( st, &(record[current].data_source),record[current].latency );
+	if(!access_type){
+		st->metrics.remote_samples[core]++;
+		add_page_2move(st,page_sampled );
+	}
+}
