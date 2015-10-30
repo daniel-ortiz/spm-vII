@@ -424,9 +424,9 @@ void calculate_pf_diff(struct sampling_settings *st){
 			*(st->metrics.pf_diff_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j)-*(st->metrics.pf_last_values+i*ncores+j);
 			*(st->metrics.pf_last_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j);
 			//st->metrics.pf_last_values[i][j]=st->metrics.pf_read_values[i][j];
-			printf("%d %lu ",j, *(st->metrics.pf_diff_values+i*ncores+j) );
+			//printf("%d %lu ",j, *(st->metrics.pf_diff_values+i*ncores+j) );
 		}
-		printf("\n");
+		//printf("\n");
 	}
 
 }

@@ -83,6 +83,8 @@ void *control_spm (void *arg){
 	
 	
 	printf("MIG-CTRL> migration complete \n");
+	//reenable sampling
+	start_sampling(ss);
 	//we wait until the process finishes
 	wait_res=wait_watch_process(-1,ss);
 	stop_sampling(ss);
