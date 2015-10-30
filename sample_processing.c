@@ -411,7 +411,7 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 	//updates the found value
 	for(int i=0; i<COUNT_NUM; i++){
 		//*(st->metrics.pf_read_values+i*ncores+ncpu)
-		*(st->metrics.pf_read_values+i*ncores+ncpu)=sample.countval.counts[i];
+		*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)=sample.countval.counts[i];
 		//st->metrics.pf_read_values[i][cpu->cpuid]=sample.countval.counts[i];
 	}
 
@@ -419,10 +419,27 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 
 void calculate_pf_diff(struct sampling_settings *st){
 	int ncores=st->n_cores;
-	for(int i=0; i<COUNT_NUM; i++){
-		for(int j=0; j<st->n_cores; j++){
-			*(st->metrics.pf_diff_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j)-*(st->metrics.pf_last_values+i*ncores+j);
-			*(st->metrics.pf_last_values+i*ncores+j)=*(st->metrics.pf_read_values+i*ncores+j);
+	struct perf_info *current;
+
+	for(int j=0; j<st->n_cores; j++){
+		current=malloc(sizeof (struct perf_info));
+		current->values=malloc(sizeof(int)*COUNT_NUM);
+		current->time=wtime();
+		//it does the respective linking
+		if(!st->metrics.perf_info_first[j]){
+			st->metrics.perf_info_first[j]=current;
+		}
+		if(!st->metrics.perf_info_last[j]){
+			st->metrics.perf_info_last[j]=current;
+		}else{
+			st->metrics.perf_info_last[j]->next=current;
+			st->metrics.perf_info_last[j]=current;
+		}
+		for(int i=0; i<COUNT_NUM; i++){
+
+			current->values[i]=*(st->metrics.pf_read_values+j*COUNT_NUM+i);
+			*(st->metrics.pf_diff_values+j*COUNT_NUM+i)=*(st->metrics.pf_read_values+j*COUNT_NUM+i)-*(st->metrics.pf_last_values+j*COUNT_NUM+i);
+			*(st->metrics.pf_last_values+j*COUNT_NUM+i)=*(st->metrics.pf_read_values+j*COUNT_NUM+i);
 			//st->metrics.pf_last_values[i][j]=st->metrics.pf_read_values[i][j];
 			//printf("%d %lu ",j, *(st->metrics.pf_diff_values+i*ncores+j) );
 		}

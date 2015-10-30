@@ -75,6 +75,8 @@ void *control_spm (void *arg){
 	sm->pf_last_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	sm->pf_read_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	sm->pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	sm->perf_info_first=malloc(sizeof(struct perf_info*)*ss->n_cores);
+	sm->perf_info_last=malloc(sizeof(struct perf_info*)*ss->n_cores);
 	memset(sm->pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(sm->pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(sm->pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
@@ -149,6 +151,8 @@ int init_spm(struct sampling_settings *ss){
 	ss->metrics.pf_last_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	ss->metrics.pf_read_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	ss->metrics.pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
+	ss->metrics.perf_info_first=malloc(sizeof(struct perf_info*)*ss->n_cores);
+	ss->metrics.perf_info_last=malloc(sizeof(struct perf_info*)*ss->n_cores);
 	memset(ss->metrics.pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(ss->metrics.pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(ss->metrics.pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);

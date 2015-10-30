@@ -96,6 +96,12 @@ struct l3_addr{
 	struct l3_addr *next;
 };
 
+struct perf_info{
+	double time;
+	int* values;
+	struct perf_info *next;
+};
+
 struct sampling_metrics {
 	int total_samples;
 	int *process_samples;
@@ -103,6 +109,8 @@ struct sampling_metrics {
 	int *pf_last_values;
 	int *pf_diff_values;
 	int *pf_read_values;
+	struct perf_info **perf_info_first;
+	struct perf_info **perf_info_last;
 	struct page_stats *page_accesses;
 	struct access_stats *lvl_accesses;
 	struct freq_stats *freq_accesses;
