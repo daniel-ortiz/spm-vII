@@ -472,4 +472,30 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 		st->metrics.remote_samples[core]++;
 		add_page_2move(st,page_sampled );
 	}
+
+
 }
+
+void print_performance(struct sampling_settings *st){
+		int out=1,i,j;
+		struct perf_info **currents=malloc(st->n_cores*sizeof(struct perf_info));
+		for(i=0; i<st->n_cores; i++){
+			currents[i]=st->metrics.perf_info_first[i];
+		}
+
+		while(out){
+			//will retrieve the info for very cpu
+			out=0;
+			for(i=0; i<st->n_cores; i++){
+				out = out & currents[i]!=NULL;
+				if(currents[i]){
+					printf("%d %f", i, currents[i]->time);
+					for(j=0; j<st->n_cpus; j++){
+						printf("%d", currents[i]->values[j]);
+					}
+					printf("\n");
+					currents[i]=currents[i]->next;
+				}
+			}
+		}
+	}

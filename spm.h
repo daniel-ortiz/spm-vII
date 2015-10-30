@@ -127,6 +127,7 @@ struct sampling_metrics {
 	char* output_label;
 	int	argv_size;
 	int measure_time;
+	double start_time;
 	perf_cpu_t *cpus_ll;
 	perf_cpu_t *cpus_pf;
 	boolean_t end_recording;
@@ -168,3 +169,4 @@ int init_spm(struct sampling_settings *ss);
 void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current);
 void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record, int current, struct _perf_cpu *cpu);
 void calculate_pf_diff(struct sampling_settings *st);
+void print_performance(struct sampling_settings *st);

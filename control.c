@@ -42,7 +42,7 @@ void *control_spm (void *arg){
 	
 	measuring_time=ss->measure_time > 0 ? ss->measure_time : DEFAULT_MEASURE_TIME ;
 	
-
+	ss->start_time=wtime();
 	int wait_res= wait_watch_process( measuring_time,ss);
 	
 	if(wait_res) goto end_noproc;
@@ -92,6 +92,7 @@ void *control_spm (void *arg){
 	stop_sampling(ss);
 	ss->end_recording=1;
 	print_statistics(ss);
+	print_performance(ss);
 	end_noproc:
 	printf("MIG-CTRL> End of sampling due to end of existing process  \n");
 	fflush(stdout);
