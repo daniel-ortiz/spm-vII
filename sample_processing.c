@@ -424,7 +424,7 @@ void calculate_pf_diff(struct sampling_settings *st){
 	for(int j=0; j<st->n_cores; j++){
 		current=malloc(sizeof (struct perf_info));
 		current->values=malloc(sizeof(int)*COUNT_NUM);
-		current->time=wtime();
+		current->time=st->start_time- wtime();
 		//it does the respective linking
 		if(!st->metrics.perf_info_first[j]){
 			st->metrics.perf_info_first[j]=current;
@@ -490,7 +490,7 @@ void print_performance(struct sampling_settings *st){
 				out = out & currents[i]!=NULL;
 				if(currents[i]){
 					printf("%d %f", i, currents[i]->time);
-					for(j=0; j<st->n_cpus; j++){
+					for(j=0; j<COUNT_NUM; j++){
 						printf("%d", currents[i]->values[j]);
 					}
 					printf("\n");

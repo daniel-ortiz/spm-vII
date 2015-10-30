@@ -56,13 +56,14 @@ void *control_spm (void *arg){
 		ss->end_recording=1;
 		return 0;
 	}
-
+	print_performance(ss);
+	stop_sampling(ss);
 	do_great_migration(ss);
 
 	printf("** %d\n",ss->number_pages2move);
 	
 	old_sm=ss->metrics;
-	//temporarily disable because of sporadic segfaults
+	//temporarily disabled because of sporadic segfaults
 	//free_metrics(&old_sm);
 	
 
