@@ -477,25 +477,45 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 }
 
 void print_performance(struct sampling_settings *st){
-		int out=1,i,j;
+		int out=1,i,j,first;
 		struct perf_info **currents=malloc(st->n_cores*sizeof(struct perf_info));
+		struct perf_info **previouses=malloc(st->n_cores*sizeof(struct perf_info));
+		double ltime;
 		for(i=0; i<st->n_cores; i++){
 			currents[i]=st->metrics.perf_info_first[i];
 		}
+		uint64_t *accum=malloc(sizeof(uint64_t)*COUNT_NUM);
+		memset(accum,0,sizeof(uint64_t)*COUNT_NUM);
 
 		while(out){
 			//will retrieve the info for very cpu
 			out=0;
+			first=1;
 			for(i=0; i<st->n_cores; i++){
-				out = out & currents[i]!=NULL;
 				if(currents[i]){
+					out++;
 					printf("%d %f", i, currents[i]->time);
 					for(j=0; j<COUNT_NUM; j++){
 						printf("%d", currents[i]->values[j]);
+						accum[j]+=currents[i]->values[j];
 					}
 					printf("\n");
+					
+					if(!first){
+						previouses[i]=currents[i];
+					}
+					ltime=currents[i]->time;
 					currents[i]=currents[i]->next;
+					first=0;
 				}
 			}
+			
+			if(!first){
+				printf("AVG: %f ",ltime);
+				for(j=0; j<COUNT_NUM; j++){
+					printf("%lu ", accum[j]/first);
+				}
+			printf(" \n");
+			}
 		}
-	}
+}
