@@ -98,7 +98,7 @@ struct l3_addr{
 
 struct perf_info{
 	double time;
-	int* values;
+	uint64_t* values;
 	struct perf_info *next;
 };
 

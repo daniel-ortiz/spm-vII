@@ -191,18 +191,22 @@ void do_great_migration(struct sampling_settings *ss){
 	int ret,count=0,count2=0,*nodes,*nodes_query, *status,i,succesfully_moved=0,destination_node=0,greatest_count=0,truncated=0;
 	double tinit=0, tfin=0;
 	struct page_stats *sear=NULL;
-
-	start_mig:
-	printf("l3 accesses %d \n",ss->number_pages2move);
+	
+	
+	
 	pages=malloc(sizeof(void*) * ss->number_pages2move);
 	status=malloc(sizeof(int) * ss->number_pages2move);
 	nodes_query=malloc(sizeof(int) * ss->number_pages2move);
 	memset(nodes_query, 0, sizeof(int) * ss->number_pages2move);
+	start_mig:
+	
+	printf("l3 accesses %d \n",ss->number_pages2move);
 	//get the home of the current target pages
 	while(current){
 		*(pages+count)=(void *)current->page_addr;
 		current=current->next;	
 		count++;
+		
 	}
 	exit_loop:
 	move_pages(ss->pid_uo, count, pages, nodes_query, status,0);
@@ -407,6 +411,8 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 	int ncpu=cpu->cpuid;
 	int ncores=st->n_cores;
 	sample=record[current];
+	if(record->pid!=st->pid_uo ){
+		return;}
 	//printf("profiling %d %lu %lu ", cpu->cpuid, sample.countval.counts[0], sample.countval.counts[1]);
 	//updates the found value
 	for(int i=0; i<COUNT_NUM; i++){
@@ -424,7 +430,7 @@ void calculate_pf_diff(struct sampling_settings *st){
 	for(int j=0; j<st->n_cores; j++){
 		current=malloc(sizeof (struct perf_info));
 		current->values=malloc(sizeof(int)*COUNT_NUM);
-		current->time=st->start_time- wtime();
+		current->time=wtime()-st->start_time ;
 		//it does the respective linking
 		if(!st->metrics.perf_info_first[j]){
 			st->metrics.perf_info_first[j]=current;
@@ -480,7 +486,7 @@ void print_performance(struct sampling_settings *st){
 		int out=1,i,j,first;
 		struct perf_info **currents=malloc(st->n_cores*sizeof(struct perf_info));
 		struct perf_info **previouses=malloc(st->n_cores*sizeof(struct perf_info));
-		double ltime;
+		double ltime,val;
 		for(i=0; i<st->n_cores; i++){
 			currents[i]=st->metrics.perf_info_first[i];
 		}
@@ -494,9 +500,9 @@ void print_performance(struct sampling_settings *st){
 			for(i=0; i<st->n_cores; i++){
 				if(currents[i]){
 					out++;
-					printf("%d %f", i, currents[i]->time);
+					printf("%d %f ", i, currents[i]->time);
 					for(j=0; j<COUNT_NUM; j++){
-						printf("%d", currents[i]->values[j]);
+						printf("%lu ", currents[i]->values[j]);
 						accum[j]+=currents[i]->values[j];
 					}
 					printf("\n");
@@ -511,11 +517,13 @@ void print_performance(struct sampling_settings *st){
 			}
 			
 			if(!first){
-				printf("AVG: %f ",ltime);
+				printf("AVE: %f ",ltime);
 				for(j=0; j<COUNT_NUM; j++){
-					printf("%lu ", accum[j]/first);
+					val= out != 0 ? (float) accum[j]/out :0 ;
+					printf("%f ",val );
 				}
 			printf(" \n");
 			}
+			memset(accum,0,sizeof(uint64_t)*COUNT_NUM);
 		}
 }

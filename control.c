@@ -57,7 +57,7 @@ void *control_spm (void *arg){
 		return 0;
 	}
 	print_performance(ss);
-	stop_sampling(ss);
+	
 	do_great_migration(ss);
 
 	printf("** %d\n",ss->number_pages2move);
@@ -81,6 +81,8 @@ void *control_spm (void *arg){
 	memset(sm->pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(sm->pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(sm->pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
+	memset(sm->perf_info_first,0,sizeof(struct perf_info*)*ss->n_cores);
+	memset(sm->perf_info_last,0,sizeof(struct perf_info*)*ss->n_cores);
 	ss->metrics=*sm;
 	
 	
@@ -155,6 +157,8 @@ int init_spm(struct sampling_settings *ss){
 	ss->metrics.pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	ss->metrics.perf_info_first=malloc(sizeof(struct perf_info*)*ss->n_cores);
 	ss->metrics.perf_info_last=malloc(sizeof(struct perf_info*)*ss->n_cores);
+	memset(ss->metrics.perf_info_first,0,sizeof(struct perf_info*)*ss->n_cores);
+	memset(ss->metrics.perf_info_last,0,sizeof(struct perf_info*)*ss->n_cores);
 	memset(ss->metrics.pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(ss->metrics.pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(ss->metrics.pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);

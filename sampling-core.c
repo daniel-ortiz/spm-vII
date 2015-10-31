@@ -473,8 +473,8 @@ profiling_sample_read(struct perf_event_mmap_page *mhdr, int size,
 L_EXIT:	
 	if (size > 0) {
 		mmap_buffer_skip(mhdr, size);
-		printf("profiling_sample_read: skip %d bytes, ret=%d\n",
-			size, ret);
+		//printf("profiling_sample_read: skip %d bytes, ret=%d\n",
+		//	size, ret);
 	}
 
 	return (ret);
