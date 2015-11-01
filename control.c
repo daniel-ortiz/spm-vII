@@ -37,7 +37,7 @@ int wait_watch_process(int seconds,struct sampling_settings* ss){
 void *control_spm (void *arg){
 	int measuring_time;
 	struct sampling_settings *ss=(struct sampling_settings*  ) arg;
-	struct sampling_metrics old_sm;
+	
 	printf("MIG-CTRL> begin of mesurement control \n");
 	
 	measuring_time=ss->measure_time > 0 ? ss->measure_time : DEFAULT_MEASURE_TIME ;
@@ -56,13 +56,13 @@ void *control_spm (void *arg){
 		ss->end_recording=1;
 		return 0;
 	}
-	print_performance(ss);
-	
+
+	//we stop temporarily to take ll samples
+	ss->disable_ll=1;
 	do_great_migration(ss);
 
-	printf("** %d\n",ss->number_pages2move);
+	printf("candidates to move %d\n",ss->number_pages2move);
 	
-	old_sm=ss->metrics;
 	//temporarily disabled because of sporadic segfaults
 	//free_metrics(&old_sm);
 	
@@ -76,26 +76,22 @@ void *control_spm (void *arg){
 	sm->pf_last_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	sm->pf_read_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
 	sm->pf_diff_values=malloc(COUNT_NUM*sizeof(u64)*ss->n_cores);
-	sm->perf_info_first=malloc(sizeof(struct perf_info*)*ss->n_cores);
-	sm->perf_info_last=malloc(sizeof(struct perf_info*)*ss->n_cores);
+	sm->perf_info_first=ss->metrics.perf_info_first;
+	sm->perf_info_last=ss->metrics.perf_info_last;
 	memset(sm->pf_last_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(sm->pf_read_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
 	memset(sm->pf_diff_values,0,COUNT_NUM*sizeof(u64)*ss->n_cores);
-	memset(sm->perf_info_first,0,sizeof(struct perf_info*)*ss->n_cores);
-	memset(sm->perf_info_last,0,sizeof(struct perf_info*)*ss->n_cores);
+
 	ss->metrics=*sm;
-	
-	
-	
+	ss->disable_ll=0;
 	printf("MIG-CTRL> migration complete \n");
-	//reenable sampling
-	start_sampling(ss);
+
 	//we wait until the process finishes
 	wait_res=wait_watch_process(-1,ss);
 	stop_sampling(ss);
 	ss->end_recording=1;
 	print_statistics(ss);
-	print_performance(ss);
+	print_performance(sm->perf_info_first, ss);
 	end_noproc:
 	printf("MIG-CTRL> End of sampling due to end of existing process  \n");
 	fflush(stdout);
@@ -174,7 +170,7 @@ int init_spm(struct sampling_settings *ss){
 	
 	setup_sampling(ss);
 	start_sampling(ss);
-
+	ss->disable_ll=0;
 	//launches process if no existing process is specified
 	if( ss->pid_uo==-1){
 		printf("MIG-CTRL> will launch external executable\n");

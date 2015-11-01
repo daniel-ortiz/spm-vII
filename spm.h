@@ -132,6 +132,7 @@ struct sampling_metrics {
 	perf_cpu_t *cpus_pf;
 	boolean_t end_recording;
 	boolean_t only_sample;
+	boolean_t disable_ll;
 	boolean_t pf_measurements;
 	struct l3_addr *pages_2move;
 	int number_pages2move;
@@ -169,5 +170,5 @@ int init_spm(struct sampling_settings *ss);
 void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int current);
 void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record, int current, struct _perf_cpu *cpu);
 void calculate_pf_diff(struct sampling_settings *st);
-void print_performance(struct sampling_settings *st);
 double wtime(void);
+void print_performance(struct perf_info **firsts, struct sampling_settings *st );

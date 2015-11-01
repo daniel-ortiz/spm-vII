@@ -189,6 +189,7 @@ void do_great_migration(struct sampling_settings *ss){
 	struct l3_addr *current=ss->pages_2move;
 	void **pages;
 	int ret,count=0,count2=0,*nodes,*nodes_query, *status,i,succesfully_moved=0,destination_node=0,greatest_count=0,truncated=0;
+	int move_pending=0,move_size,already_moved=0,same_home=0;
 	double tinit=0, tfin=0;
 	struct page_stats *sear=NULL;
 	
@@ -198,9 +199,9 @@ void do_great_migration(struct sampling_settings *ss){
 	status=malloc(sizeof(int) * ss->number_pages2move);
 	nodes_query=malloc(sizeof(int) * ss->number_pages2move);
 	memset(nodes_query, 0, sizeof(int) * ss->number_pages2move);
-	start_mig:
+
 	
-	printf("l3 accesses %d \n",ss->number_pages2move);
+	printf("Candidate accesses %d \n",ss->number_pages2move);
 	//get the home of the current target pages
 	while(current){
 		*(pages+count)=(void *)current->page_addr;
@@ -208,7 +209,7 @@ void do_great_migration(struct sampling_settings *ss){
 		count++;
 		
 	}
-	exit_loop:
+
 	move_pages(ss->pid_uo, count, pages, nodes_query, status,0);
 	
 	count=0;
@@ -234,7 +235,7 @@ void do_great_migration(struct sampling_settings *ss){
 		}
 		//we ignore the pages where the destination is where they already are
 		if(*(nodes_query+count2)==destination_node){
-			count2++;
+			same_home++;
 			current=current->next;	
 			continue;
 		}
@@ -244,52 +245,46 @@ void do_great_migration(struct sampling_settings *ss){
 		count++;
 		count2++;
 		*(nodes+count)=destination_node;
-		
-		/**
-		 * The number has to be restricted because apparently a large array size causes segfault
-		 */
-		if(count2 == MAX_SINGLE_MIGRATE){
-			ss->pages_2move=current;
-			printf("will restrict the number of processed pages %d %d %d\n",ss->number_pages2move, count, count2);
-			truncated=1;
-			goto init_move;
-		}
 	}
-	ss->number_pages2move-=count2;
+
 	//if(ss->migrate_chunk_size >0 )
 	//	count=ss->migrate_chunk_size;
-	init_move:	
-	tinit=wtime();
-	ret= 	move_pages(ss->pid_uo, count, pages, nodes, status,0);
+	printf("MIG> The initial query has found %d pages to move out of %d,(%d,%d) candidates \n",count,count2+same_home,same_home,count2);
 	
-	if (ret!=0){
-		printf("move_pages returned an error %d \n",errno);
-	}
+	move_pending=count;
+	
+	do{
+		tinit=wtime();
+		
+		if(move_pending>MAX_SINGLE_MIGRATE){
+			move_size=MAX_SINGLE_MIGRATE;
+		}else{
+			move_size=move_pending; 
+		}
+		ret= 	move_pages(ss->pid_uo, move_size, pages+already_moved, nodes+already_moved, status+already_moved,0);
+		if (ret!=0){
+			printf("move_pages returned an error %d \n",errno);
+		}
+		move_pending-=move_size;
+		tfin=wtime()-tinit;
+		printf("Moved %d pages in %f, already moved %d pages and %d pages to move \n",move_size,tfin, already_moved,move_pending);
+		already_moved+=move_size;
+	}while(move_pending>0);
+	ss->number_pages2move-=count+count2+same_home;
 	
 	//check the new home of the pages
-	ret= 	move_pages(ss->pid_uo, count, pages, NULL, status,0);
-	tfin=wtime()-tinit;
+	ret= 	move_pages(ss->pid_uo, move_size, pages, NULL, status,0);
+	
 	
 	for(i=0; i<count;i++){
 			if(status[i] >=0 && status[i]<ss->n_cpus)
 				succesfully_moved++;		
-			//printf(" %d ",status[i]);
-			
-			//if(i%20==0) printf ("\n");	
-		}
 	
-	
-	
-	ss->moved_pages+=succesfully_moved;
-	printf("%d lem/rte accesses, attempt to move %d, %d pages moved successfully, move pages time %f \n",count2,count,succesfully_moved,tfin);
-	
-	if(truncated){
-		count=0;
-		count2=0;
-		truncated=0;
-		succesfully_moved=0;
-		goto start_mig;	
 	}
+		
+	ss->moved_pages+=succesfully_moved;
+	
+
 }
 
 int* get_cpu_interval(int max_cores, char* siblings ){
@@ -460,7 +455,9 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 		return;
 	}
 	//TODO counter with mismatching number of cpus
-
+	if(st->disable_ll) return;
+	
+	
 	st->metrics.total_samples++;
 	//TODO also get samples from the sampling process, detect high overhead
 	if(record[current].pid != st->pid_uo){
@@ -482,45 +479,46 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 
 }
 
-void print_performance(struct sampling_settings *st){
+void print_performance(struct perf_info **firsts, struct sampling_settings *st ){
 		int out=1,i,j,first;
 		struct perf_info **currents=malloc(st->n_cores*sizeof(struct perf_info));
 		struct perf_info **previouses=malloc(st->n_cores*sizeof(struct perf_info));
 		double ltime,val;
 		for(i=0; i<st->n_cores; i++){
-			currents[i]=st->metrics.perf_info_first[i];
+			currents[i]=firsts[i];
 		}
 		uint64_t *accum=malloc(sizeof(uint64_t)*COUNT_NUM);
 		memset(accum,0,sizeof(uint64_t)*COUNT_NUM);
-
+		first=1;
 		while(out){
 			//will retrieve the info for very cpu
 			out=0;
-			first=1;
 			for(i=0; i<st->n_cores; i++){
 				if(currents[i]){
 					out++;
-					printf("%d %f ", i, currents[i]->time);
-					for(j=0; j<COUNT_NUM; j++){
-						printf("%lu ", currents[i]->values[j]);
-						accum[j]+=currents[i]->values[j];
-					}
-					printf("\n");
 					
 					if(!first){
-						previouses[i]=currents[i];
+						printf("%d %f ", i, currents[i]->time);
+						for(j=0; j<COUNT_NUM; j++){
+							printf("%lu ", currents[i]->values[j]-previouses[i]->values[j]);
+							accum[j]+=currents[i]->values[j]-previouses[i]->values[j];
+						}
+						
+						printf("\n");
 					}
 					ltime=currents[i]->time;
+					previouses[i]=currents[i];
 					currents[i]=currents[i]->next;
-					first=0;
+					
 				}
 			}
+			first=0;
 			
 			if(!first){
 				printf("AVE: %f ",ltime);
 				for(j=0; j<COUNT_NUM; j++){
 					val= out != 0 ? (float) accum[j]/out :0 ;
-					printf("%f ",val );
+					printf("%lu ",(unsigned long)val );
 				}
 			printf(" \n");
 			}
