@@ -8,6 +8,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include "spm.h"
+#include <errno.h>
+
 
 
 double wtime(void)
@@ -189,7 +191,7 @@ void do_great_migration(struct sampling_settings *ss){
 	struct l3_addr *current=ss->pages_2move;
 	void **pages;
 	int ret,count=0,count2=0,*nodes,*nodes_query, *status,i,succesfully_moved=0,destination_node=0,greatest_count=0,truncated=0;
-	int move_pending=0,move_size,already_moved=0,same_home=0;
+	int move_pending=0,move_size,already_moved=0,same_home=0,*destinations;
 	double tinit=0, tfin=0;
 	struct page_stats *sear=NULL;
 	
@@ -199,7 +201,8 @@ void do_great_migration(struct sampling_settings *ss){
 	status=malloc(sizeof(int) * ss->number_pages2move);
 	nodes_query=malloc(sizeof(int) * ss->number_pages2move);
 	memset(nodes_query, 0, sizeof(int) * ss->number_pages2move);
-
+	destinations=malloc(sizeof(int)*ss->n_cpus);
+	memset(destinations,0,sizeof(int)*ss->n_cpus);
 	
 	printf("Candidate accesses %d \n",ss->number_pages2move);
 	//get the home of the current target pages
@@ -207,11 +210,15 @@ void do_great_migration(struct sampling_settings *ss){
 		*(pages+count)=(void *)current->page_addr;
 		current=current->next;	
 		count++;
-		
 	}
 
-	move_pages(ss->pid_uo, count, pages, nodes_query, status,0);
-	
+	ret=move_pages(ss->pid_uo, count, pages, nodes_query, NULL,0);
+	printf("MIG> pages query returned %d \n",ret);
+
+	if(ret!=0){
+		printf("ERRNO %d \n",errno);
+	}
+
 	count=0;
 	memset(pages, 0, sizeof(int) * ss->number_pages2move);
 	current=ss->pages_2move;
@@ -226,6 +233,9 @@ void do_great_migration(struct sampling_settings *ss){
 			count2++;
 			continue;
 		}
+		greatest_count=0;
+		destination_node=0;
+
 		//The destination is the node with the greatest number of accesses
 		for(i=0; i<ss->n_cpus; i++){
 			if(sear->proc_accesses[i]>greatest_count){
@@ -233,13 +243,16 @@ void do_great_migration(struct sampling_settings *ss){
 					destination_node=i;
 			}
 		}
+
 		//we ignore the pages where the destination is where they already are
+		//For this if is that we need count 2
 		if(*(nodes_query+count2)==destination_node){
 			same_home++;
+			count2++;
 			current=current->next;	
 			continue;
 		}
-		
+		destinations[destination_node]++;
 		*(pages+count)=(void *)current->page_addr;
 		current=current->next;	
 		count++;
@@ -250,7 +263,11 @@ void do_great_migration(struct sampling_settings *ss){
 	//if(ss->migrate_chunk_size >0 )
 	//	count=ss->migrate_chunk_size;
 	printf("MIG> The initial query has found %d pages to move out of %d,(%d,%d) candidates \n",count,count2+same_home,same_home,count2);
-	
+	printf("Destination breakdown: ");
+	for(i=0; i<ss->n_cpus; i++){
+		printf(" - %d %d ",i, destinations[i] );
+	}
+	printf("\n");
 	move_pending=count;
 	
 	do{

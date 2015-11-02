@@ -37,7 +37,7 @@ int wait_watch_process(int seconds,struct sampling_settings* ss){
 void *control_spm (void *arg){
 	int measuring_time;
 	struct sampling_settings *ss=(struct sampling_settings*  ) arg;
-	
+	char* printres;
 	printf("MIG-CTRL> begin of mesurement control \n");
 	
 	measuring_time=ss->measure_time > 0 ? ss->measure_time : DEFAULT_MEASURE_TIME ;
@@ -91,7 +91,9 @@ void *control_spm (void *arg){
 	stop_sampling(ss);
 	ss->end_recording=1;
 	print_statistics(ss);
-	print_performance(sm->perf_info_first, ss);
+	printres=getenv("SPM_PRINT_PERFORMANCE");
+	if(printres)
+		print_performance(sm->perf_info_first, ss);
 	end_noproc:
 	printf("MIG-CTRL> End of sampling due to end of existing process  \n");
 	fflush(stdout);
