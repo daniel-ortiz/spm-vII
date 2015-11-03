@@ -138,7 +138,9 @@ struct sampling_metrics {
 	int number_pages2move;
 	int moved_pages;
 	int ll_sampling_period;
-	int ll_weight_threshold;;
+	int ll_weight_threshold;
+	int total_samples;
+	int sampling_samples;
 	struct sampling_metrics metrics;	
 };
 

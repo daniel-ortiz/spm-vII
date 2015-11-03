@@ -135,6 +135,8 @@ int init_spm(struct sampling_settings *ss){
 	ss->n_cores=numa_num_configured_cpus();
 	ss->n_cpus=numa_num_configured_nodes();
 	
+	ss->total_samples=0;
+	ss->sampling_samples=0;
 	if(ss->ll_sampling_period<3){
 		ss->ll_sampling_period=DEFAULT_LL_SAMPLING_PERIOD;
 	}

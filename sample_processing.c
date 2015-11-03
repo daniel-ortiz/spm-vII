@@ -157,7 +157,7 @@ void print_statistics(struct sampling_settings *ss){
 				total_proc_samples+=m.process_samples[i];
 				printf("%s cpu %d:  %d / %d \n",lbl,  i,  m.remote_samples[i],m.process_samples[i]);
 		}
-		printf("\t %s PID %d total process samples: %d \n\n\n",lbl,ss->pid_uo, m.total_samples);
+		printf("\t %s total samples %d sampling %d PID %d process samples: %d \n\n\n",lbl,ss->total_samples,ss->sampling_samples,ss->pid_uo, m.total_samples);
 		printf("BREAKDOWN BY LOAD LATENCY\n\n");
 		for(i=0; i<WEIGHT_BUCKETS_NR; i++){
 			lbound=i*WEIGHT_BUCKET_INTERVAL;
@@ -212,7 +212,7 @@ void do_great_migration(struct sampling_settings *ss){
 		count++;
 	}
 
-	ret=move_pages(ss->pid_uo, count, pages, nodes_query, NULL,0);
+	ret=move_pages(ss->pid_uo, count, pages , NULL,nodes_query,0);
 	printf("MIG> pages query returned %d \n",ret);
 
 	if(ret!=0){
@@ -474,7 +474,11 @@ void consume_sample(struct sampling_settings *st,  pf_ll_rec_t *record, int curr
 	//TODO counter with mismatching number of cpus
 	if(st->disable_ll) return;
 	
-	
+	if(getpid() == record[current].pid){
+		st->sampling_samples++; 
+	}
+		
+	st->total_samples++;
 	st->metrics.total_samples++;
 	//TODO also get samples from the sampling process, detect high overhead
 	if(record[current].pid != st->pid_uo){
