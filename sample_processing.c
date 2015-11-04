@@ -422,6 +422,7 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 	pf_profiling_rec_t sample;
 	int ncpu=cpu->cpuid;
 	int ncores=st->n_cores;
+	uint64_t val;
 	sample=record[current];
 	if(record->pid!=st->pid_uo ){
 		return;}
@@ -429,7 +430,11 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 	//updates the found value
 	for(int i=0; i<COUNT_NUM; i++){
 		//*(st->metrics.pf_read_values+i*ncores+ncpu)
-		*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)=sample.countval.counts[i];
+		val=sample.countval.counts[i];
+		//the value must always be increasing
+		if(*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)<val){
+			*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)=val;
+		}
 		//st->metrics.pf_read_values[i][cpu->cpuid]=sample.countval.counts[i];
 	}
 

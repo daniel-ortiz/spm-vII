@@ -174,3 +174,4 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 void calculate_pf_diff(struct sampling_settings *st);
 double wtime(void);
 void print_performance(struct perf_info **firsts, struct sampling_settings *st );
+void force_remote(int pid);

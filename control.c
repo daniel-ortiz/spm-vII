@@ -4,7 +4,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
- #include <numa.h>
+#include <sys/stat.h>
+#include <numa.h>
 #include "spm.h"
 
 int wait_watch_process(int seconds,struct sampling_settings* ss){
@@ -125,9 +126,11 @@ void* run_numa_sampling(void *arg){
 
 int init_spm(struct sampling_settings *ss){
 	pthread_t spm_thread;
-	int launched_pid;
+	int launched_pid,stres;
 	//struct sampling_metrics old_sm;
 	struct cpu_topo *cpu_topo;
+	struct stat *buf;
+
 	//required by numatop core
 	init_globals();
 	
@@ -172,16 +175,28 @@ int init_spm(struct sampling_settings *ss){
 	
 	//Set up registers and start before taking samples
 	
-	setup_sampling(ss);
-	start_sampling(ss);
-	ss->disable_ll=0;
+	
 	//launches process if no existing process is specified
 	if( ss->pid_uo==-1){
-		printf("MIG-CTRL> will launch external executable\n");
+		printf("MIG-CTRL> will launch external executable %s \n",ss->command2_launch[0]);
+		stres=stat(ss->command2_launch[0],buf);
+		if(stres==-1 && errno == ENOENT){
+			printf("executable not found, will exit \n");
+			return 0;
+		}
 		ss->pid_uo=launch_command(ss->command2_launch, ss->argv_size);
 	}else{
 		printf("MIG-CTRL> will watch pid %d\n",ss->pid_uo);
 	}
+	
+	#ifdef FORCE_REMOTE
+		force_remote(ss->pid_uo);
+	
+	#endif
+	
+	setup_sampling(ss);
+	start_sampling(ss);
+	ss->disable_ll=0;
 	
 	if(pthread_create(&spm_thread,NULL,&run_numa_sampling, ss)){
 		return NUMATOOL_ERROR; 
