@@ -250,7 +250,7 @@ int main(int argc, char **argv)
 	
 	 if ( argc > 6 && !strcmp(argv[5],"-mtime") && argv[6] ){
 		mtime=atoi(argv[6]);
-		if(lbl > 0){
+		if(mtime > 0){
 			st.measure_time=mtime;
 		}
 	}
