@@ -86,8 +86,10 @@ struct page_stats{
 };
 
 struct access_stats{
-	int count;
-	int mem_lvl;
+	unsigned short count;
+	unsigned short mem_lvl;
+	unsigned short home_flips;
+	unsigned_short last_access;
 	UT_hash_handle hh;
 };
 

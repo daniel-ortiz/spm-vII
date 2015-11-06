@@ -191,10 +191,10 @@ void do_great_migration(struct sampling_settings *ss){
 	struct l3_addr *current=ss->pages_2move;
 	void **pages;
 	int ret,count=0,count2=0,*nodes,*nodes_query, *status,i,succesfully_moved=0,destination_node=0,greatest_count=0,truncated=0;
-	int move_pending=0,move_size,already_moved=0,same_home=0,*destinations;
+	int move_pending=0,move_size,already_moved=0,same_home=0,*destinations,significant_threshold=0;
 	double tinit=0, tfin=0;
 	struct page_stats *sear=NULL;
-	
+	char* thrswitch;
 	
 	
 	pages=malloc(sizeof(void*) * ss->number_pages2move);
@@ -220,6 +220,13 @@ void do_great_migration(struct sampling_settings *ss){
 	}
 
 	count=0;
+	//This is the criteria for when to move a sample
+	thrswitch=getenv("SPM_SIG_THRESH");
+	if(thrswitch && atoi(thrswitch)>1){
+		printf("evvar %s %d- \n",thrswitch,atoi(thrswitch));
+		significant_threshold=atoi(thrswitch);
+		printf("MIG> Will only move pages visited more thann %d times\n",significant_threshold);
+	}
 	memset(pages, 0, sizeof(int) * ss->number_pages2move);
 	current=ss->pages_2move;
 	nodes=malloc(sizeof(int) * ss->number_pages2move);
@@ -233,7 +240,7 @@ void do_great_migration(struct sampling_settings *ss){
 			count2++;
 			continue;
 		}
-		greatest_count=0;
+		greatest_count=significant_threshold;
 		destination_node=0;
 
 		//The destination is the node with the greatest number of accesses
@@ -460,11 +467,11 @@ void calculate_pf_diff(struct sampling_settings *st){
 		}
 		for(int i=0; i<COUNT_NUM; i++){
 
-			current->values[i]=*(st->metrics.pf_read_values+j*COUNT_NUM+i);
+
 			*(st->metrics.pf_diff_values+j*COUNT_NUM+i)=*(st->metrics.pf_read_values+j*COUNT_NUM+i)-*(st->metrics.pf_last_values+j*COUNT_NUM+i);
+			//printf("-- %f %d %lu %lu %lu",current->time,j,*(st->metrics.pf_diff_values+j*COUNT_NUM+i),*(st->metrics.pf_read_values+j*COUNT_NUM+i), *(st->metrics.pf_last_values+j*COUNT_NUM+i));
 			*(st->metrics.pf_last_values+j*COUNT_NUM+i)=*(st->metrics.pf_read_values+j*COUNT_NUM+i);
-			//st->metrics.pf_last_values[i][j]=st->metrics.pf_read_values[i][j];
-			//printf("%d %lu ",j, *(st->metrics.pf_diff_values+i*ncores+j) );
+			current->values[i]=*(st->metrics.pf_diff_values+j*COUNT_NUM+i);
 		}
 		//printf("\n");
 	}
@@ -526,14 +533,16 @@ void print_performance(struct perf_info **firsts, struct sampling_settings *st )
 					if(!first){
 						printf("%d %f ", i, currents[i]->time);
 						for(j=0; j<COUNT_NUM; j++){
-							printf("%lu ", currents[i]->values[j]-previouses[i]->values[j]);
-							accum[j]+=currents[i]->values[j]-previouses[i]->values[j];
+
+								printf(" %lu ", currents[i]->values[j] );
+								accum[j]+=currents[i]->values[j];
+
 						}
 						
 						printf("\n");
 					}
 					ltime=currents[i]->time;
-					previouses[i]=currents[i];
+					//previouses[i]=currents[i];
 					currents[i]=currents[i]->next;
 					
 				}

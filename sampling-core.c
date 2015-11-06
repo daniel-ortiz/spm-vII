@@ -701,7 +701,7 @@ cpu_profiling_setup(perf_cpu_t *cpu, void *arg)
 	 * */
 	pf_conf_t evt1={ .type=PERF_TYPE_RAW,.config= 0x5301B7,  .config1=0x67f800001, .count_id= COUNT_RMA, .sample_period=10000};
 	pf_conf_t evt2={ .type=PERF_TYPE_RAW,.config= 0x5301BB,  .config1=0x600400001, .count_id= COUNT_LMA, .sample_period=10000};
-	pf_conf_t evt3={ .type=PERF_TYPE_HARDWARE,.config= PERF_COUNT_HW_INSTRUCTIONS,  .config1=0, .count_id= COUNT_IR, .sample_period=50000};
+	pf_conf_t evt3={ .type=PERF_TYPE_HARDWARE,.config= PERF_COUNT_HW_INSTRUCTIONS,  .config1=0, .count_id= COUNT_IR, .sample_period=10000};
 
 	// PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS, 0x53, 0, "instr_retired.any" },
 	pf_conf_t conf_arr[COUNT_NUM]={evt1,evt2,evt3} ;

@@ -46,7 +46,8 @@ void *control_spm (void *arg){
 	ss->start_time=wtime();
 	int wait_res= wait_watch_process( measuring_time,ss);
 	
-	if(wait_res) goto end_noproc;
+	//only go there if it is moving pages
+	if(wait_res && !ss->only_sample) goto end_noproc;
 	
 	print_statistics(ss);
 	
@@ -191,7 +192,6 @@ int init_spm(struct sampling_settings *ss){
 	
 	#ifdef FORCE_REMOTE
 		force_remote(ss->pid_uo);
-	
 	#endif
 	
 	setup_sampling(ss);
