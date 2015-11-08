@@ -8,18 +8,26 @@
 #include <numa.h>
 #include "spm.h"
 
+#include <string.h>
+#include <sys/ioctl.h>
+#include <linux/perf_event.h>
+#include <asm/unistd.h>
+static long
+perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
+                int cpu, int group_fd, unsigned long flags)
+{
+    int ret;
+
+    ret = syscall(__NR_perf_event_open, hw_event, pid, cpu,
+                   group_fd, flags);
+    return ret;
+}
 int wait_watch_process(int seconds,struct sampling_settings* ss){
 	int i=0,exit=0;
 	int sigres,*st=0,errn;
 
-	pf_profiling_rec_t* pf_record=malloc(sizeof(pf_profiling_rec_t)*BUFFER_SIZE);
-
 	//every second it wakes up to make sure the process is alive
 	while(!exit){
-		if(ss->pf_measurements){
-			read_pf_samples(ss,pf_record );
-			calculate_pf_diff(ss);
-		}
 		sleep(1);
 		sigres=kill(ss->pid_uo,0);
 		waitpid(ss->pid_uo,st,WNOHANG);
@@ -29,8 +37,10 @@ int wait_watch_process(int seconds,struct sampling_settings* ss){
 					return -1;
 				}
 			}
+
 		exit= (seconds > 1 && ++i<seconds) || seconds < 1 ? 0 : 1;
 	}
+
 	return 0;
 }
 
@@ -39,11 +49,12 @@ void *control_spm (void *arg){
 	int measuring_time;
 	struct sampling_settings *ss=(struct sampling_settings*  ) arg;
 	char* printres;
-	printf("MIG-CTRL> begin of mesurement control \n");
+	printf("MIG-CTRL> begin of measurement control. \n");
 	
 	measuring_time=ss->measure_time > 0 ? ss->measure_time : DEFAULT_MEASURE_TIME ;
 	
 	ss->start_time=wtime();
+	ss->time_last_read=wtime();
 	int wait_res= wait_watch_process( measuring_time,ss);
 	
 	//only go there if it is moving pages
@@ -53,12 +64,15 @@ void *control_spm (void *arg){
 	
 	if(ss->only_sample){
 		kill(ss->pid_uo,9);
-		printf("MIG-CTRL> will end because it is only a measurement run \n");
+		printf("MIG-CTRL> will end because it is only a measurement run. \n");
 		stop_sampling(ss);
 		ss->end_recording=1;
+		if(getenv("SPM_PRINT_PERFORMANCE"))
+				print_performance(ss->metrics.perf_info_first, ss);
 		return 0;
 	}
 
+	//stop_sampling(ss);
 	//we stop temporarily to take ll samples
 	ss->disable_ll=1;
 	do_great_migration(ss);
@@ -90,6 +104,7 @@ void *control_spm (void *arg){
 
 	//we wait until the process finishes
 	wait_res=wait_watch_process(-1,ss);
+
 	stop_sampling(ss);
 	ss->end_recording=1;
 	print_statistics(ss);
@@ -109,17 +124,21 @@ void* run_numa_sampling(void *arg){
 	pthread_t control_thread;
 	struct sampling_settings *ss=(struct sampling_settings* ) arg;
 	
-	//circular buffer for storing the load latency samples
+	//circular buffer for storing the samples
 	pf_ll_rec_t* ll_record=malloc(sizeof(pf_ll_rec_t)*BUFFER_SIZE);
+	pf_profiling_rec_t* pf_record=malloc(sizeof(pf_profiling_rec_t)*BUFFER_SIZE);
 
 	ss->end_recording=0;
+	setup_sampling(ss);
+	start_sampling(ss);
+	ss->disable_ll=0;
 	//launch control thread
 	if(pthread_create(&control_thread,NULL,control_spm,ss)){
 		printf("MIG-CTRL> could not create aux thread \n");
 	}
 	
 	//will start recording samples
-	read_ll_samples(ss,ll_record);
+	read_samples(ss,ll_record,pf_record);
 	pthread_join(control_thread, NULL); 
 	printf("MIG-CTRL> sampling ended \n");
 }
@@ -194,17 +213,13 @@ int init_spm(struct sampling_settings *ss){
 		force_remote(ss->pid_uo);
 	#endif
 	
-	setup_sampling(ss);
-	start_sampling(ss);
-	ss->disable_ll=0;
-	
 	if(pthread_create(&spm_thread,NULL,&run_numa_sampling, ss)){
-		return NUMATOOL_ERROR; 
+		return NUMATOOL_ERROR;
 	}
-	
-	pthread_join(spm_thread, NULL); 
+
+	pthread_join(spm_thread, NULL);
 		return NUMATOOL_SUCCESS;
-		
+	
 }
 
 //Define standalone if an standalone version of the program is to be made

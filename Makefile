@@ -1,5 +1,5 @@
 #CFLAGS=-g -O0
-CC=gcc-4.8
+CC=gcc
 CFLAGS=-O2 -g -std=gnu99 -lpthread -lnuma -DSTANDALONE=1
 
 all: sampling-core.o perf_helpers.o sample_processing.o control.o force-remote.o

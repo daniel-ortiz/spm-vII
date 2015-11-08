@@ -39,11 +39,19 @@ void add_mem_access( struct sampling_settings *ss, void *page_addr, int accessin
 		
 		HASH_ADD_PTR(ss->metrics.page_accesses,page_addr,current);
 		//printf ("add %d \n",HASH_COUNT(ss->metrics.page_accesses));
+		current->last_access=accessing_cpu;
 		
+	}else{
+		//The page is being calling from other node as in the last time
+		if(accessing_cpu != current->last_access){
+			current->home_flips++;
+			current->last_access=accessing_cpu;
+		}
 	}
 
 	/*Here begins the new page access bookkeeping*/
 	current->proc_accesses[proc]++;
+
 	//printf("%d", proc);
 }
 
@@ -149,6 +157,8 @@ void print_statistics(struct sampling_settings *ss){
 		int i,freq,total_proc_samples=0;
 		int ubound,lbound;
 		char  *lblstr, *lbl="TODO-setlabel";
+		int flips[21];
+		memset(flips,0,sizeof(int)*21);
 		lbl = !ss->output_label ? lbl : ss->output_label;
 		printf("\t\t\t MIGRATION STATISTICS\n\n");
 		printf("\t %s total samples: %d \n\n",lbl, m.total_samples);		
@@ -176,6 +186,10 @@ void print_statistics(struct sampling_settings *ss){
 				for(i=0; i<ss->n_cpus; i++){
 					freq+=current->proc_accesses[i];
 				}
+			if(current->home_flips>=0 && current->home_flips<20)
+				flips[current->home_flips]++;
+			else if(current->home_flips>19)
+				flips[20]++;
 				//printf("record ");
 			add_freq_access(ss,freq);	
 		}
@@ -185,7 +199,12 @@ void print_statistics(struct sampling_settings *ss){
 		HASH_ITER(hh, ss->metrics.freq_accesses, crr, tmpf) {
 			printf("%s:pages accessed:%d:%d \n",lbl,crr->freq,crr->count);
 		}
-	}
+
+		printf("CONTENTION ANALYSIS \n");
+		for(i=0; i<21;i++){
+			printf("Pages switched home % d times: %d \n", i, flips[i]);
+		}
+}
 
 void do_great_migration(struct sampling_settings *ss){
 	struct l3_addr *current=ss->pages_2move;
@@ -431,18 +450,23 @@ void update_pf_reading(struct sampling_settings *st,  pf_profiling_rec_t *record
 	int ncores=st->n_cores;
 	uint64_t val;
 	sample=record[current];
-	if(record->pid!=st->pid_uo ){
-		return;}
-	//printf("profiling %d %lu %lu ", cpu->cpuid, sample.countval.counts[0], sample.countval.counts[1]);
+
 	//updates the found value
+
 	for(int i=0; i<COUNT_NUM; i++){
 		//*(st->metrics.pf_read_values+i*ncores+ncpu)
 		val=sample.countval.counts[i];
 		//the value must always be increasing
-		if(*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)<val){
+		//if(*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)<val){
 			*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i)=val;
-		}
-		//st->metrics.pf_read_values[i][cpu->cpuid]=sample.countval.counts[i];
+			if(wtime()-st->start_time>13 && i==2)
+			;//	printf (" %d %lu %lu %lu \n",ncpu,*(st->metrics.pf_read_values+ncpu*COUNT_NUM+i),sample.countval.counts[i],val);
+		//}
+	}
+
+	if(wtime()-st->time_last_read>1){
+		calculate_pf_diff(st);
+		st->time_last_read=wtime();
 	}
 
 }
@@ -469,7 +493,7 @@ void calculate_pf_diff(struct sampling_settings *st){
 
 
 			*(st->metrics.pf_diff_values+j*COUNT_NUM+i)=*(st->metrics.pf_read_values+j*COUNT_NUM+i)-*(st->metrics.pf_last_values+j*COUNT_NUM+i);
-			//printf("-- %f %d %lu %lu %lu",current->time,j,*(st->metrics.pf_diff_values+j*COUNT_NUM+i),*(st->metrics.pf_read_values+j*COUNT_NUM+i), *(st->metrics.pf_last_values+j*COUNT_NUM+i));
+			//printf("-*- %f %d %lu %lu %lu",current->time,j,*(st->metrics.pf_diff_values+j*COUNT_NUM+i),*(st->metrics.pf_read_values+j*COUNT_NUM+i), *(st->metrics.pf_last_values+j*COUNT_NUM+i));
 			*(st->metrics.pf_last_values+j*COUNT_NUM+i)=*(st->metrics.pf_read_values+j*COUNT_NUM+i);
 			current->values[i]=*(st->metrics.pf_diff_values+j*COUNT_NUM+i);
 		}
@@ -523,6 +547,7 @@ void print_performance(struct perf_info **firsts, struct sampling_settings *st )
 		uint64_t *accum=malloc(sizeof(uint64_t)*COUNT_NUM);
 		memset(accum,0,sizeof(uint64_t)*COUNT_NUM);
 		first=1;
+		printf("COUNTER READINGS \n\n");
 		while(out){
 			//will retrieve the info for very cpu
 			out=0;

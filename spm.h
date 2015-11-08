@@ -82,14 +82,14 @@ struct freq_stats{
 struct page_stats{
 	int *proc_accesses;
 	void* page_addr;
+	unsigned short home_flips;
+	unsigned short last_access;
 	UT_hash_handle hh;
 };
 
 struct access_stats{
-	unsigned short count;
-	unsigned short mem_lvl;
-	unsigned short home_flips;
-	unsigned_short last_access;
+	int count;
+	int mem_lvl;
 	UT_hash_handle hh;
 };
 
@@ -130,6 +130,7 @@ struct sampling_metrics {
 	int	argv_size;
 	int measure_time;
 	double start_time;
+	double time_last_read;
 	perf_cpu_t *cpus_ll;
 	perf_cpu_t *cpus_pf;
 	boolean_t end_recording;
@@ -163,8 +164,7 @@ struct cpu_topo *build_cpu_topology(void);
 void init_processor_mapping(struct sampling_settings *ss, struct cpu_topo *topol);
 void do_great_migration(struct sampling_settings *ss);
 void free_metrics(struct sampling_metrics *sm);
-int read_ll_samples(struct sampling_settings *ss, pf_ll_rec_t *ll_record );
-int read_pf_samples(struct sampling_settings *ss,pf_profiling_rec_t* pf_record );
+int read_samples(struct sampling_settings *ss, pf_ll_rec_t *ll_record,pf_profiling_rec_t *pf_record );
 void init_globals();
 int setup_sampling(struct sampling_settings *ss);
 int start_sampling(struct sampling_settings *ss);
@@ -177,3 +177,4 @@ void calculate_pf_diff(struct sampling_settings *st);
 double wtime(void);
 void print_performance(struct perf_info **firsts, struct sampling_settings *st );
 void force_remote(int pid);
+void reset_pf_sampling(struct sampling_settings *ss);
